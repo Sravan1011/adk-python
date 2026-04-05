@@ -17,7 +17,7 @@ from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
-from a2a.types import TransportProtocol as A2ATransport
+
 from google.adk.agents.remote_a2a_agent import RemoteA2aAgent
 from google.adk.integrations.agent_registry import _ProtocolType
 from google.adk.integrations.agent_registry import AgentRegistry
@@ -57,7 +57,7 @@ class TestAgentRegistry:
         ),
         "interfaces": [{
             "url": "https://mcp.com",
-            "protocolBinding": A2ATransport.jsonrpc,
+            "protocolBinding": "JSONRPC",
         }],
     }
     mock_httpx.return_value.__enter__.return_value.get.return_value = (
@@ -123,7 +123,7 @@ class TestAgentRegistry:
         # "mcpServerId" is intentionally omitted
         "interfaces": [{
             "url": "https://mcp.com",
-            "protocolBinding": A2ATransport.jsonrpc,
+            "protocolBinding": "JSONRPC",
         }],
     }
     mock_httpx.return_value.__enter__.return_value.get.return_value = (
@@ -174,7 +174,7 @@ class TestAgentRegistry:
         ]
     }
     uri = registry._get_connection_uri(
-        resource_details, protocol_binding=A2ATransport.jsonrpc
+        resource_details, protocol_binding="JSONRPC"
     )
     assert uri == "https://mcp-v1main.com"
 
@@ -184,7 +184,7 @@ class TestAgentRegistry:
             "type": _ProtocolType.A2A_AGENT,
             "interfaces": [{
                 "url": "https://my-agent.com",
-                "protocolBinding": A2ATransport.jsonrpc,
+                "protocolBinding": "JSONRPC",
             }],
         }]
     }
@@ -204,7 +204,7 @@ class TestAgentRegistry:
                 "type": _ProtocolType.A2A_AGENT,
                 "interfaces": [{
                     "url": "https://my-agent.com",
-                    "protocolBinding": A2ATransport.http_json,
+                    "protocolBinding": "HTTP_JSON",
                 }],
             },
         ]
@@ -217,7 +217,7 @@ class TestAgentRegistry:
 
     # Filter by binding
     uri = registry._get_connection_uri(
-        resource_details, protocol_binding=A2ATransport.http_json
+        resource_details, protocol_binding="HTTP_JSON"
     )
     assert uri == "https://my-agent.com"
 
@@ -225,7 +225,7 @@ class TestAgentRegistry:
     uri = registry._get_connection_uri(
         resource_details,
         protocol_type=_ProtocolType.A2A_AGENT,
-        protocol_binding=A2ATransport.jsonrpc,
+        protocol_binding="JSONRPC",
     )
     assert uri is None
 
@@ -279,7 +279,7 @@ class TestAgentRegistry:
         "displayName": "TestPrefix",
         "interfaces": [{
             "url": "https://mcp.com",
-            "protocolBinding": A2ATransport.jsonrpc,
+            "protocolBinding": "JSONRPC",
         }],
     }
     mock_response.raise_for_status = MagicMock()
@@ -305,7 +305,7 @@ class TestAgentRegistry:
             "type": _ProtocolType.A2A_AGENT,
             "interfaces": [{
                 "url": "https://my-agent.com",
-                "protocolBinding": A2ATransport.jsonrpc,
+                "protocolBinding": "JSONRPC",
             }],
         }],
         "skills": [{"id": "s1", "name": "Skill 1", "description": "Desc 1"}],
@@ -322,7 +322,7 @@ class TestAgentRegistry:
     assert isinstance(agent, RemoteA2aAgent)
     assert agent.name == "TestAgent"
     assert agent.description == "Test Desc"
-    assert agent._agent_card.url == "https://my-agent.com"
+    assert agent._agent_card.supported_interfaces[0].url == "https://my-agent.com"
     assert agent._agent_card.version == "1.0"
     assert len(agent._agent_card.skills) == 1
     assert agent._agent_card.skills[0].name == "Skill 1"
@@ -339,15 +339,15 @@ class TestAgentRegistry:
                 "description": "CardDesc",
                 "version": "2.0",
                 "url": "https://card-url.com",
-                "skills": [{
-                    "id": "s1",
-                    "name": "S1",
-                    "description": "D1",
-                    "tags": ["t1"],
-                }],
-                "capabilities": {"streaming": True, "polling": False},
-                "defaultInputModes": ["text"],
-                "defaultOutputModes": ["text"],
+              "skills": [{
+                  "id": "s1",
+                  "name": "S1",
+                  "description": "D1",
+                  "tags": ["t1"],
+              }],
+              "capabilities": {"streaming": True},
+              "defaultInputModes": ["text"],
+              "defaultOutputModes": ["text"],
             },
         },
     }
@@ -364,7 +364,7 @@ class TestAgentRegistry:
     assert agent.name == "CardName"
     assert agent.description == "CardDesc"
     assert agent._agent_card.version == "2.0"
-    assert agent._agent_card.url == "https://card-url.com"
+    assert agent._agent_card.supported_interfaces[0].url == "https://card-url.com"
     assert agent._agent_card.capabilities.streaming is True
     assert len(agent._agent_card.skills) == 1
     assert agent._agent_card.skills[0].name == "S1"

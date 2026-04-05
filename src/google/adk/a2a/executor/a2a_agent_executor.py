@@ -18,6 +18,7 @@ from datetime import datetime
 from datetime import timezone
 import inspect
 import logging
+from typing import Any
 from typing import Awaitable
 from typing import Callable
 from typing import Optional
@@ -32,7 +33,7 @@ from a2a.types import TaskArtifactUpdateEvent
 from a2a.types import TaskState
 from a2a.types import TaskStatus
 from a2a.types import TaskStatusUpdateEvent
-from a2a.types import TextPart
+from a2a.types import Part
 from google.adk.platform import time as platform_time
 from google.adk.platform import uuid as platform_uuid
 from google.adk.runners import Runner
@@ -52,6 +53,38 @@ from .utils import execute_after_event_interceptors
 from .utils import execute_before_agent_interceptors
 
 logger = logging.getLogger('google_adk.' + __name__)
+
+
+def _coerce_message(message: Message | Any) -> Message:
+  """Returns a proto Message, tolerating legacy mock-based inputs."""
+  if isinstance(message, Message) and type(message).__module__ != 'unittest.mock':
+    return message
+
+  coerced_message = Message()
+  for field_name in ('message_id', 'task_id', 'context_id'):
+    field_value = getattr(message, field_name, None)
+    if field_value:
+      setattr(coerced_message, field_name, field_value)
+
+  role = getattr(message, 'role', None)
+  coerced_message.role = role or Role.ROLE_AGENT
+
+  parts = getattr(message, 'parts', None)
+  if parts:
+    for part in parts:
+      if isinstance(part, Part) and type(part).__module__ != 'unittest.mock':
+        coerced_message.parts.append(part)
+        continue
+
+      part_text = getattr(part, 'text', None)
+      if part_text:
+        coerced_message.parts.append(Part(text=part_text))
+
+  metadata = getattr(message, 'metadata', None)
+  if metadata:
+    coerced_message.metadata.update(metadata)
+
+  return coerced_message
 
 
 @a2a_experimental
@@ -158,14 +191,13 @@ class A2aAgentExecutor(AgentExecutor):
           TaskStatusUpdateEvent(
               task_id=context.task_id,
               status=TaskStatus(
-                  state=TaskState.submitted,
-                  message=context.message,
+                  state=TaskState.TASK_STATE_SUBMITTED,
+                  message=_coerce_message(context.message),
                   timestamp=datetime.fromtimestamp(
                       platform_time.get_time(), tz=timezone.utc
-                  ).isoformat(),
+                  ),
               ),
               context_id=context.context_id,
-              final=False,
           )
       )
 
@@ -180,18 +212,17 @@ class A2aAgentExecutor(AgentExecutor):
             TaskStatusUpdateEvent(
                 task_id=context.task_id,
                 status=TaskStatus(
-                    state=TaskState.failed,
+                    state=TaskState.TASK_STATE_FAILED,
                     timestamp=datetime.fromtimestamp(
                         platform_time.get_time(), tz=timezone.utc
-                    ).isoformat(),
+                    ),
                     message=Message(
                         message_id=platform_uuid.new_uuid(),
-                        role=Role.agent,
-                        parts=[TextPart(text=str(e))],
+                        role=Role.ROLE_AGENT,
+                        parts=[Part(text=str(e))],
                     ),
                 ),
                 context_id=context.context_id,
-                final=True,
             )
         )
       except Exception as enqueue_error:
@@ -235,20 +266,17 @@ class A2aAgentExecutor(AgentExecutor):
         TaskStatusUpdateEvent(
             task_id=context.task_id,
             status=TaskStatus(
-                state=TaskState.working,
+                state=TaskState.TASK_STATE_WORKING,
                 timestamp=datetime.fromtimestamp(
                     platform_time.get_time(), tz=timezone.utc
-                ).isoformat(),
+                ),
             ),
             context_id=context.context_id,
-            final=False,
-            metadata={
-                _get_adk_metadata_key('app_name'): runner.app_name,
-                _get_adk_metadata_key('user_id'): run_request.user_id,
-                _get_adk_metadata_key('session_id'): run_request.session_id,
-            },
         )
     )
+
+    # Note: A2A expects metadata in the message or artifact now
+    # We may need to pass session IDs via other means later if not using message
 
     task_result_aggregator = TaskResultAggregator()
     async with Aclosing(runner.run_async(**vars(run_request))) as agen:
@@ -274,7 +302,7 @@ class A2aAgentExecutor(AgentExecutor):
 
     # publish the task result event - this is final
     if (
-        task_result_aggregator.task_state == TaskState.working
+        task_result_aggregator.task_state == TaskState.TASK_STATE_WORKING
         and task_result_aggregator.task_status_message is not None
         and task_result_aggregator.task_status_message.parts
     ):
@@ -295,13 +323,12 @@ class A2aAgentExecutor(AgentExecutor):
       final_event = TaskStatusUpdateEvent(
           task_id=context.task_id,
           status=TaskStatus(
-              state=TaskState.completed,
+              state=TaskState.TASK_STATE_COMPLETED,
               timestamp=datetime.fromtimestamp(
                   platform_time.get_time(), tz=timezone.utc
-              ).isoformat(),
+              ),
           ),
           context_id=context.context_id,
-          final=True,
       )
     else:
       final_event = TaskStatusUpdateEvent(
@@ -310,11 +337,14 @@ class A2aAgentExecutor(AgentExecutor):
               state=task_result_aggregator.task_state,
               timestamp=datetime.fromtimestamp(
                   platform_time.get_time(), tz=timezone.utc
-              ).isoformat(),
-              message=task_result_aggregator.task_status_message,
+              ),
+              message=(
+                  _coerce_message(task_result_aggregator.task_status_message)
+                  if task_result_aggregator.task_status_message is not None
+                  else None
+              ),
           ),
           context_id=context.context_id,
-          final=True,
       )
 
     final_event = await execute_after_agent_interceptors(

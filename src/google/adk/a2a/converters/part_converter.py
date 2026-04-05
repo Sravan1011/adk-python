@@ -28,9 +28,12 @@ from typing import Union
 
 from a2a import types as a2a_types
 from google.genai import types as genai_types
+from google.protobuf import struct_pb2
+from google.protobuf.json_format import MessageToDict, MessageToJson
 
 from ..experimental import a2a_experimental
 from .utils import _get_adk_metadata_key
+
 
 logger = logging.getLogger('google_adk.' + __name__)
 
@@ -54,64 +57,85 @@ GenAIPartToA2APartConverter = Callable[
 ]
 
 
+def _has_field(part: a2a_types.Part, field_name: str) -> bool:
+  """Returns whether a proto-like part has a populated field."""
+  has_field = getattr(part, 'HasField', None)
+  if not callable(has_field):
+    return False
+  try:
+    result = has_field(field_name)
+  except Exception:
+    return False
+  return isinstance(result, bool) and result
+
+
+def _get_metadata_value(part: a2a_types.Part, key: str):
+  """Returns a metadata value from a proto Struct or dict-like metadata."""
+  metadata = getattr(part, 'metadata', None)
+  if not metadata:
+    return None
+  try:
+    return metadata.get(key)
+  except AttributeError:
+    try:
+      return metadata[key]
+    except Exception:
+      return None
+
+
 @a2a_experimental
 def convert_a2a_part_to_genai_part(
     a2a_part: a2a_types.Part,
 ) -> Optional[genai_types.Part]:
   """Convert an A2A Part to a Google GenAI Part."""
-  part = a2a_part.root
-  if isinstance(part, a2a_types.TextPart):
+  
+  if _has_field(a2a_part, 'text'):
     thought = None
-    if part.metadata:
-      thought = part.metadata.get(_get_adk_metadata_key('thought'))
-    return genai_types.Part(text=part.text, thought=thought)
+    thought = _get_metadata_value(a2a_part, _get_adk_metadata_key('thought'))
+    return genai_types.Part(text=a2a_part.text, thought=thought)
 
-  if isinstance(part, a2a_types.FilePart):
-    if isinstance(part.file, a2a_types.FileWithUri):
-      return genai_types.Part(
-          file_data=genai_types.FileData(
-              file_uri=part.file.uri,
-              mime_type=part.file.mime_type,
-              display_name=part.file.name,
-          )
-      )
+  if _has_field(a2a_part, 'url'):
+    return genai_types.Part(
+        file_data=genai_types.FileData(
+            file_uri=a2a_part.url,
+            mime_type=a2a_part.media_type,
+            display_name=a2a_part.filename,
+        )
+    )
 
-    elif isinstance(part.file, a2a_types.FileWithBytes):
-      return genai_types.Part(
-          inline_data=genai_types.Blob(
-              data=base64.b64decode(part.file.bytes),
-              mime_type=part.file.mime_type,
-              display_name=part.file.name,
-          )
-      )
-    else:
-      logger.warning(
-          'Cannot convert unsupported file type: %s for A2A part: %s',
-          type(part.file),
-          a2a_part,
-      )
-      return None
+  if _has_field(a2a_part, 'raw'):
+    return genai_types.Part(
+        inline_data=genai_types.Blob(
+            data=a2a_part.raw,
+            mime_type=a2a_part.media_type,
+            display_name=a2a_part.filename,
+        )
+    )
 
-  if isinstance(part, a2a_types.DataPart):
+  if _has_field(a2a_part, 'data'):
     # Convert the Data Part to funcall and function response.
     # This is mainly for converting human in the loop and auth request and
     # response.
     # TODO once A2A defined how to service such information, migrate below
     # logic accordingly
-    if (
-        part.metadata
-        and _get_adk_metadata_key(A2A_DATA_PART_METADATA_TYPE_KEY)
-        in part.metadata
-    ):
+    part_type = _get_metadata_value(
+        a2a_part, _get_adk_metadata_key(A2A_DATA_PART_METADATA_TYPE_KEY)
+    )
+    if part_type is not None:
+      try:
+          data_dict = MessageToDict(a2a_part.data)
+      except Exception:
+          data_dict = {}
+
       if (
-          part.metadata[_get_adk_metadata_key(A2A_DATA_PART_METADATA_TYPE_KEY)]
+          part_type
           == A2A_DATA_PART_METADATA_TYPE_FUNCTION_CALL
       ):
         # Restore thought_signature if present
         thought_signature = None
         thought_sig_key = _get_adk_metadata_key('thought_signature')
-        if thought_sig_key in part.metadata:
-          sig_value = part.metadata[thought_sig_key]
+        sig_value = _get_metadata_value(a2a_part, thought_sig_key)
+        if sig_value is not None:
           if isinstance(sig_value, bytes):
             thought_signature = sig_value
           elif isinstance(sig_value, str):
@@ -123,51 +147,57 @@ def convert_a2a_part_to_genai_part(
               )
         return genai_types.Part(
             function_call=genai_types.FunctionCall.model_validate(
-                part.data, by_alias=True
+                data_dict, by_alias=True
             ),
             thought_signature=thought_signature,
         )
       if (
-          part.metadata[_get_adk_metadata_key(A2A_DATA_PART_METADATA_TYPE_KEY)]
+          part_type
           == A2A_DATA_PART_METADATA_TYPE_FUNCTION_RESPONSE
       ):
         return genai_types.Part(
             function_response=genai_types.FunctionResponse.model_validate(
-                part.data, by_alias=True
+                data_dict, by_alias=True
             )
         )
       if (
-          part.metadata[_get_adk_metadata_key(A2A_DATA_PART_METADATA_TYPE_KEY)]
+          part_type
           == A2A_DATA_PART_METADATA_TYPE_CODE_EXECUTION_RESULT
       ):
         return genai_types.Part(
             code_execution_result=genai_types.CodeExecutionResult.model_validate(
-                part.data, by_alias=True
+                data_dict, by_alias=True
             )
         )
       if (
-          part.metadata[_get_adk_metadata_key(A2A_DATA_PART_METADATA_TYPE_KEY)]
+          part_type
           == A2A_DATA_PART_METADATA_TYPE_EXECUTABLE_CODE
       ):
         return genai_types.Part(
             executable_code=genai_types.ExecutableCode.model_validate(
-                part.data, by_alias=True
+                data_dict, by_alias=True
             )
         )
+    
+    # Extract the JSON payload using MessageToJson 
+    # and then encode to bytes for inline_data
+    try:
+      data_json = MessageToJson(a2a_part.data, preserving_proto_field_name=True)
+    except Exception as e:
+      logger.warning('Failed to render data to json: %s', e)
+      data_json = "{}"
+    
     return genai_types.Part(
         inline_data=genai_types.Blob(
             data=A2A_DATA_PART_START_TAG
-            + part.model_dump_json(by_alias=True, exclude_none=True).encode(
-                'utf-8'
-            )
+            + data_json.encode('utf-8')
             + A2A_DATA_PART_END_TAG,
             mime_type=A2A_DATA_PART_TEXT_MIME_TYPE,
         )
     )
 
   logger.warning(
-      'Cannot convert unsupported part type: %s for A2A part: %s',
-      type(part),
+      'Cannot convert unsupported A2A part: %s',
       a2a_part,
   )
   return None
@@ -178,22 +208,22 @@ def convert_genai_part_to_a2a_part(
     part: genai_types.Part,
 ) -> Optional[a2a_types.Part]:
   """Convert a Google GenAI Part to an A2A Part."""
+  if part is None:
+    logger.warning('Cannot convert unsupported GenAI part: %s', part)
+    return None
 
   if part.text:
-    a2a_part = a2a_types.TextPart(text=part.text)
+    a2a_part = a2a_types.Part(text=part.text)
     if part.thought is not None:
-      a2a_part.metadata = {_get_adk_metadata_key('thought'): part.thought}
-    return a2a_types.Part(root=a2a_part)
+      # Struct initialization of metadata
+      a2a_part.metadata.update({_get_adk_metadata_key('thought'): part.thought})
+    return a2a_part
 
   if part.file_data:
     return a2a_types.Part(
-        root=a2a_types.FilePart(
-            file=a2a_types.FileWithUri(
-                uri=part.file_data.file_uri,
-                mime_type=part.file_data.mime_type,
-                name=part.file_data.display_name,
-            )
-        )
+        url=part.file_data.file_uri,
+        media_type=part.file_data.mime_type,
+        filename=part.file_data.display_name,
     )
 
   if part.inline_data:
@@ -203,32 +233,35 @@ def convert_genai_part_to_a2a_part(
         and part.inline_data.data.startswith(A2A_DATA_PART_START_TAG)
         and part.inline_data.data.endswith(A2A_DATA_PART_END_TAG)
     ):
-      return a2a_types.Part(
-          root=a2a_types.DataPart.model_validate_json(
-              part.inline_data.data[
-                  len(A2A_DATA_PART_START_TAG) : -len(A2A_DATA_PART_END_TAG)
-              ]
-          )
-      )
-    # The default case for inline_data is to convert it to FileWithBytes.
-    a2a_part = a2a_types.FilePart(
-        file=a2a_types.FileWithBytes(
-            bytes=base64.b64encode(part.inline_data.data).decode('utf-8'),
-            mime_type=part.inline_data.mime_type,
-            name=part.inline_data.display_name,
-        )
+      extracted_json = part.inline_data.data[
+          len(A2A_DATA_PART_START_TAG) : -len(A2A_DATA_PART_END_TAG)
+      ]
+      try:
+          data_dict = json.loads(extracted_json)
+          v = struct_pb2.Value()
+          from google.protobuf.json_format import ParseDict
+          ParseDict(data_dict, v)
+          return a2a_types.Part(data=v)
+      except Exception as e:
+          logger.warning('Failed to parse GenAI datapart json: %s', e)
+          return a2a_types.Part(data=struct_pb2.Value())
+
+    # The default case for inline_data is to convert it to raw Part.
+    a2a_part = a2a_types.Part(
+        raw=part.inline_data.data,
+        media_type=part.inline_data.mime_type,
+        filename=part.inline_data.display_name,
     )
 
     if part.video_metadata:
-      a2a_part.metadata = {
-          _get_adk_metadata_key(
-              'video_metadata'
-          ): part.video_metadata.model_dump(by_alias=True, exclude_none=True)
-      }
+      video_dict = part.video_metadata.model_dump(by_alias=True, exclude_none=True)
+      a2a_part.metadata.update(
+          {_get_adk_metadata_key('video_metadata'): video_dict}
+      )
 
-    return a2a_types.Part(root=a2a_part)
+    return a2a_part
 
-  # Convert the funcall and function response to A2A DataPart.
+  # Convert the funcall and function response to A2A Data Part.
   # This is mainly for converting human in the loop and auth request and
   # response.
   # TODO once A2A defined how to service such information, migrate below
@@ -244,56 +277,65 @@ def convert_genai_part_to_a2a_part(
       fc_metadata[_get_adk_metadata_key('thought_signature')] = (
           base64.b64encode(part.thought_signature).decode('utf-8')
       )
-    return a2a_types.Part(
-        root=a2a_types.DataPart(
-            data=part.function_call.model_dump(
-                by_alias=True, exclude_none=True
-            ),
-            metadata=fc_metadata,
-        )
+      
+    fc_dict = part.function_call.model_dump(
+        by_alias=True, exclude_none=True
     )
+    from google.protobuf.json_format import ParseDict
+    v = struct_pb2.Value()
+    ParseDict(fc_dict, v)
+    
+    a2a_part = a2a_types.Part(data=v)
+    a2a_part.metadata.update(fc_metadata)
+    return a2a_part
 
   if part.function_response:
-    return a2a_types.Part(
-        root=a2a_types.DataPart(
-            data=part.function_response.model_dump(
-                by_alias=True, exclude_none=True
-            ),
-            metadata={
-                _get_adk_metadata_key(
-                    A2A_DATA_PART_METADATA_TYPE_KEY
-                ): A2A_DATA_PART_METADATA_TYPE_FUNCTION_RESPONSE
-            },
-        )
+    fr_dict = part.function_response.model_dump(
+        by_alias=True, exclude_none=True
     )
+    from google.protobuf.json_format import ParseDict
+    v = struct_pb2.Value()
+    ParseDict(fr_dict, v)
+    
+    a2a_part = a2a_types.Part(data=v)
+    a2a_part.metadata.update({
+        _get_adk_metadata_key(
+            A2A_DATA_PART_METADATA_TYPE_KEY
+        ): A2A_DATA_PART_METADATA_TYPE_FUNCTION_RESPONSE
+    })
+    return a2a_part
 
   if part.code_execution_result:
-    return a2a_types.Part(
-        root=a2a_types.DataPart(
-            data=part.code_execution_result.model_dump(
-                by_alias=True, exclude_none=True
-            ),
-            metadata={
-                _get_adk_metadata_key(
-                    A2A_DATA_PART_METADATA_TYPE_KEY
-                ): A2A_DATA_PART_METADATA_TYPE_CODE_EXECUTION_RESULT
-            },
-        )
+    cer_dict = part.code_execution_result.model_dump(
+        by_alias=True, exclude_none=True
     )
+    from google.protobuf.json_format import ParseDict
+    v = struct_pb2.Value()
+    ParseDict(cer_dict, v)
+    
+    a2a_part = a2a_types.Part(data=v)
+    a2a_part.metadata.update({
+        _get_adk_metadata_key(
+            A2A_DATA_PART_METADATA_TYPE_KEY
+        ): A2A_DATA_PART_METADATA_TYPE_CODE_EXECUTION_RESULT
+    })
+    return a2a_part
 
   if part.executable_code:
-    return a2a_types.Part(
-        root=a2a_types.DataPart(
-            data=part.executable_code.model_dump(
-                by_alias=True, exclude_none=True
-            ),
-            metadata={
-                _get_adk_metadata_key(
-                    A2A_DATA_PART_METADATA_TYPE_KEY
-                ): A2A_DATA_PART_METADATA_TYPE_EXECUTABLE_CODE
-            },
-        )
+    ec_dict = part.executable_code.model_dump(
+        by_alias=True, exclude_none=True
     )
+    from google.protobuf.json_format import ParseDict
+    v = struct_pb2.Value()
+    ParseDict(ec_dict, v)
+    
+    a2a_part = a2a_types.Part(data=v)
+    a2a_part.metadata.update({
+        _get_adk_metadata_key(
+            A2A_DATA_PART_METADATA_TYPE_KEY
+        ): A2A_DATA_PART_METADATA_TYPE_EXECUTABLE_CODE
+    })
+    return a2a_part
 
   logger.warning(
       'Cannot convert unsupported part for Google GenAI part: %s',

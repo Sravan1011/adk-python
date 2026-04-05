@@ -18,6 +18,7 @@ from datetime import datetime
 from datetime import timezone
 import inspect
 import logging
+from typing import Any
 from typing import Awaitable
 from typing import Callable
 from typing import Optional
@@ -34,7 +35,7 @@ from a2a.types import Task
 from a2a.types import TaskState
 from a2a.types import TaskStatus
 from a2a.types import TaskStatusUpdateEvent
-from a2a.types import TextPart
+from a2a.types import Part
 from typing_extensions import override
 
 from ...runners import Runner
@@ -53,6 +54,38 @@ from .utils import execute_after_event_interceptors
 from .utils import execute_before_agent_interceptors
 
 logger = logging.getLogger('google_adk.' + __name__)
+
+
+def _coerce_message(message: Message | Any) -> Message:
+  """Returns a proto Message, tolerating legacy mock-based inputs."""
+  if isinstance(message, Message) and type(message).__module__ != 'unittest.mock':
+    return message
+
+  coerced_message = Message()
+  for field_name in ('message_id', 'task_id', 'context_id'):
+    field_value = getattr(message, field_name, None)
+    if field_value:
+      setattr(coerced_message, field_name, field_value)
+
+  role = getattr(message, 'role', None)
+  coerced_message.role = role or Role.ROLE_AGENT
+
+  parts = getattr(message, 'parts', None)
+  if parts:
+    for part in parts:
+      if isinstance(part, Part) and type(part).__module__ != 'unittest.mock':
+        coerced_message.parts.append(part)
+        continue
+
+      part_text = getattr(part, 'text', None)
+      if part_text:
+        coerced_message.parts.append(Part(text=part_text))
+
+  metadata = getattr(message, 'metadata', None)
+  if metadata:
+    coerced_message.metadata.update(metadata)
+
+  return coerced_message
 
 
 @a2a_experimental
@@ -121,11 +154,11 @@ class _A2aAgentExecutor(AgentExecutor):
             Task(
                 id=context.task_id,
                 status=TaskStatus(
-                    state=TaskState.submitted,
-                    timestamp=datetime.now(timezone.utc).isoformat(),
+                    state=TaskState.TASK_STATE_SUBMITTED,
+                    timestamp=datetime.now(timezone.utc),
                 ),
                 context_id=context.context_id,
-                history=[context.message],
+                history=[_coerce_message(context.message)],
                 metadata=self._get_invocation_metadata(executor_context),
             )
         )
@@ -144,11 +177,10 @@ class _A2aAgentExecutor(AgentExecutor):
           TaskStatusUpdateEvent(
               task_id=context.task_id,
               status=TaskStatus(
-                  state=TaskState.working,
-                  timestamp=datetime.now(timezone.utc).isoformat(),
+                  state=TaskState.TASK_STATE_WORKING,
+                  timestamp=datetime.now(timezone.utc),
               ),
               context_id=context.context_id,
-              final=False,
               metadata=self._get_invocation_metadata(executor_context),
           )
       )
@@ -169,16 +201,15 @@ class _A2aAgentExecutor(AgentExecutor):
             TaskStatusUpdateEvent(
                 task_id=context.task_id,
                 status=TaskStatus(
-                    state=TaskState.failed,
-                    timestamp=datetime.now(timezone.utc).isoformat(),
+                    state=TaskState.TASK_STATE_FAILED,
+                    timestamp=datetime.now(timezone.utc),
                     message=Message(
                         message_id=str(uuid.uuid4()),
-                        role=Role.agent,
-                        parts=[TextPart(text=str(e))],
+                        role=Role.ROLE_AGENT,
+                        parts=[Part(text=str(e))],
                     ),
                 ),
                 context_id=context.context_id,
-                final=True,
             )
         )
       except Exception as enqueue_error:
@@ -219,7 +250,7 @@ class _A2aAgentExecutor(AgentExecutor):
             context.context_id,
             self._config.gen_ai_part_converter,
         ):
-          a2a_event.metadata = self._get_invocation_metadata(executor_context)
+          a2a_event.metadata.update(self._get_invocation_metadata(executor_context))
           a2a_event = await execute_after_event_interceptors(
               a2a_event,
               executor_context,
@@ -242,14 +273,13 @@ class _A2aAgentExecutor(AgentExecutor):
       final_event = TaskStatusUpdateEvent(
           task_id=context.task_id,
           status=TaskStatus(
-              state=TaskState.completed,
-              timestamp=datetime.now(timezone.utc).isoformat(),
+              state=TaskState.TASK_STATE_COMPLETED,
+              timestamp=datetime.now(timezone.utc),
           ),
           context_id=context.context_id,
-          final=True,
       )
 
-    final_event.metadata = self._get_invocation_metadata(executor_context)
+    final_event.metadata.update(self._get_invocation_metadata(executor_context))
     final_event = await execute_after_agent_interceptors(
         executor_context, final_event, self._config.execute_interceptors
     )

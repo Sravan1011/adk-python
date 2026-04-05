@@ -20,7 +20,7 @@ from typing import Optional
 from typing import Union
 
 from a2a.client import ClientEvent as A2AClientEvent
-from a2a.client.middleware import ClientCallContext
+from a2a.client import ClientCallContext
 from a2a.types import Message as A2AMessage
 
 from ...agents.invocation_context import InvocationContext

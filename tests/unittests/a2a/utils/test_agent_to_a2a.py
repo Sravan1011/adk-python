@@ -832,14 +832,16 @@ class TestToA2A:
     # Mock agent card data from file with all required fields
     agent_card_data = {
         "name": "file_agent",
-        "url": "http://example.com",
+        "supportedInterfaces": [{
+            "url": "http://example.com",
+            "protocolBinding": "JSONRPC",
+        }],
         "description": "Test agent from file",
         "version": "1.0.0",
         "capabilities": {},
         "skills": [],
         "defaultInputModes": ["text/plain"],
         "defaultOutputModes": ["text/plain"],
-        "supportsAuthenticatedExtendedCard": False,
     }
     mock_json_load.return_value = agent_card_data
 

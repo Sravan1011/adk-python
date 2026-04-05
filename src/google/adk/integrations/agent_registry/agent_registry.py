@@ -34,7 +34,6 @@ from a2a.client.client_factory import minimal_agent_card
 from a2a.types import AgentCapabilities
 from a2a.types import AgentCard
 from a2a.types import AgentSkill
-from a2a.types import TransportProtocol as A2ATransport
 from google.adk.agents.readonly_context import ReadonlyContext
 from google.adk.agents.remote_a2a_agent import RemoteA2aAgent
 from google.adk.telemetry.tracing import GCP_MCP_SERVER_DESTINATION_ID
@@ -254,9 +253,9 @@ class AgentRegistry:
       mcp_server_id = None
 
     endpoint_uri = self._get_connection_uri(
-        server_details, protocol_binding=A2ATransport.jsonrpc
+        server_details, protocol_binding="JSONRPC"
     ) or self._get_connection_uri(
-        server_details, protocol_binding=A2ATransport.http_json
+        server_details, protocol_binding="HTTP_JSON"
     )
     if not endpoint_uri:
       raise ValueError(
@@ -303,7 +302,17 @@ class AgentRegistry:
     card = agent_info.get("card", {})
     card_content = card.get("content")
     if card.get("type") == "A2A_AGENT_CARD" and card_content:
-      agent_card = AgentCard(**card_content)
+      if "url" in card_content:
+        card_url = card_content.pop("url")
+        if "supported_interfaces" not in card_content:
+          card_content["supported_interfaces"] = [{"url": card_url, "protocol_binding": "JSONRPC"}]
+      from google.protobuf.json_format import ParseDict
+
+      agent_card = ParseDict(
+          card_content,
+          AgentCard(),
+          ignore_unknown_fields=True,
+      )
       # Clean the name to be a valid identifier
       name = self._clean_name(agent_card.name)
       return RemoteA2aAgent(
@@ -338,11 +347,9 @@ class AgentRegistry:
         name=name,
         description=description,
         version=version,
-        url=url,
         skills=skills,
-        capabilities=AgentCapabilities(streaming=False, polling=False),
-        defaultInputModes=["text"],
-        defaultOutputModes=["text"],
+        supported_interfaces=[{"url": url, "protocol_binding": "JSONRPC"}],
+        capabilities=AgentCapabilities(),
     )
 
     return RemoteA2aAgent(

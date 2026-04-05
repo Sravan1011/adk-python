@@ -19,6 +19,7 @@ import sys
 from unittest.mock import Mock
 from unittest.mock import patch
 
+from google.protobuf.json_format import ParseDict
 import pytest
 
 # Skip all tests in this module if Python version is less than 3.10
@@ -28,17 +29,14 @@ pytestmark = pytest.mark.skipif(
 
 # Import dependencies with version checking
 try:
-  from a2a.types import DataPart as A2ADataPart
+  from a2a.types import Part as A2APart
   from a2a.types import Message as A2AMessage
-  from a2a.types import MessageSendConfiguration
-  from a2a.types import MessageSendParams
   from a2a.types import Part as A2APart
   from a2a.types import Role
-  from a2a.types import SendMessageRequest
   from a2a.types import Task as A2ATask
   from a2a.types import TaskState
   from a2a.types import TaskStatus
-  from a2a.types import TextPart as A2ATextPart
+  from a2a.types import Part as A2APart
   from google.adk.a2a.logs.log_utils import build_a2a_request_log
   from google.adk.a2a.logs.log_utils import build_a2a_response_log
   from google.adk.a2a.logs.log_utils import build_message_part_log
@@ -59,8 +57,7 @@ class TestBuildMessagePartLog:
     """Test TextPart with short text."""
 
     # Create real A2A objects
-    text_part = A2ATextPart(text="Hello, world!")
-    part = A2APart(root=text_part)
+    part = A2APart(text="Hello, world!")
 
     result = build_message_part_log(part)
 
@@ -70,8 +67,7 @@ class TestBuildMessagePartLog:
     """Test TextPart with long text that gets truncated."""
 
     long_text = "x" * 150  # Long text that should be truncated
-    text_part = A2ATextPart(text=long_text)
-    part = A2APart(root=text_part)
+    part = A2APart(text=long_text)
 
     result = build_message_part_log(part)
 
@@ -81,14 +77,15 @@ class TestBuildMessagePartLog:
   def test_data_part_simple_data(self):
     """Test DataPart with simple data."""
 
-    data_part = A2ADataPart(data={"key1": "value1", "key2": 42})
-    part = A2APart(root=data_part)
+    data_part = A2APart()
+    ParseDict({"key1": "value1", "key2": 42}, data_part.data)
+    part = data_part
 
     result = build_message_part_log(part)
 
-    expected_data = {"key1": "value1", "key2": 42}
-    expected = f"DataPart: {json.dumps(expected_data, indent=2)}"
-    assert result == expected
+    assert result.startswith("DataPart: ")
+    logged_data = json.loads(result.removeprefix("DataPart: "))
+    assert logged_data == {"key1": "value1", "key2": 42.0}
 
   def test_data_part_large_values(self):
     """Test DataPart with large values that get summarized."""
@@ -96,15 +93,14 @@ class TestBuildMessagePartLog:
     large_dict = {f"key{i}": f"value{i}" for i in range(50)}
     large_list = list(range(100))
 
-    data_part = A2ADataPart(
-        data={
-            "small_value": "hello",
-            "large_dict": large_dict,
-            "large_list": large_list,
-            "normal_int": 42,
-        }
-    )
-    part = A2APart(root=data_part)
+    data_part = A2APart()
+    ParseDict({
+        "small_value": "hello",
+        "large_dict": large_dict,
+        "large_list": large_list,
+        "normal_int": 42,
+    }, data_part.data)
+    part = data_part
 
     result = build_message_part_log(part)
 
@@ -126,7 +122,7 @@ class TestBuildMessagePartLog:
     mock_root.metadata = None
 
     mock_part = Mock()
-    mock_part.root = mock_root
+    mock_part = mock_root
     mock_part.model_dump_json.return_value = '{"some": "data"}'
 
     result = build_message_part_log(mock_part)
@@ -144,12 +140,12 @@ class TestBuildA2ARequestLog:
     # Create mock request with all components
     req = A2AMessage(
         message_id="msg-456",
-        role="user",
+        role=Role.ROLE_USER,
         task_id="task-789",
         context_id="ctx-101",
         parts=[
-            A2APart(root=A2ATextPart(text="Part 1")),
-            A2APart(root=A2ATextPart(text="Part 2")),
+            A2APart(text="Part 1"),
+            A2APart(text="Part 2"),
         ],
         metadata={"msg_key": "msg_value"},
     )
@@ -163,7 +159,7 @@ class TestBuildA2ARequestLog:
 
     # Verify all components are present
     assert "msg-456" in result
-    assert "user" in result
+    assert "Role: 1" in result or "ROLE_USER" in result or "user" in result
     assert "task-789" in result
     assert "ctx-101" in result
     assert "Part 0:" in result
@@ -224,6 +220,8 @@ class TestBuildA2AResponseLog:
     assert (
         "Status State: TaskState.working" in result
         or "Status State: working" in result
+        or "Status State: TASK_STATE_WORKING" in result
+        or "Status State: 2" in result
         or '"state":"working"' in result
         or '"state": "working"' in result
     )
@@ -236,8 +234,8 @@ class TestBuildA2AResponseLog:
         message_id="status-msg-123",
         role=Role.agent,
         parts=[
-            A2APart(root=A2ATextPart(text="Status part 1")),
-            A2APart(root=A2ATextPart(text="Status part 2")),
+            A2APart(text="Status part 1"),
+            A2APart(text="Status part 2"),
         ],
     )
 
@@ -259,6 +257,8 @@ class TestBuildA2AResponseLog:
     assert (
         "Role: Role.agent" in result
         or "Role: agent" in result
+        or "Role: ROLE_AGENT" in result
+        or "Role: 2" in result
         or '"role":"agent"' in result
         or '"role": "agent"' in result
     )
@@ -273,7 +273,7 @@ class TestBuildA2AResponseLog:
         role=Role.agent,
         task_id="task-456",
         context_id="ctx-789",
-        parts=[A2APart(root=A2ATextPart(text="Message part 1"))],
+        parts=[A2APart(text="Message part 1")],
     )
 
     resp = message
@@ -287,6 +287,8 @@ class TestBuildA2AResponseLog:
     assert (
         "Role: Role.agent" in result
         or "Role: agent" in result
+        or "Role: ROLE_AGENT" in result
+        or "Role: 2" in result
         or '"role":"agent"' in result
         or '"role": "agent"' in result
     )
@@ -352,7 +354,7 @@ class TestBuildA2AResponseLog:
     mock_root.metadata = {"key": "value", "nested": {"data": "test"}}
 
     mock_part = Mock()
-    mock_part.root = mock_root
+    mock_part = mock_root
     mock_part.model_dump_json.return_value = '{"content": "test"}'
 
     result = build_message_part_log(mock_part)

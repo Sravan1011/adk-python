@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from typing import Union
 
-from a2a.client.middleware import ClientCallContext
+from a2a.client import ClientCallContext
 from a2a.extensions.common import HTTP_EXTENSION_HEADER
 from a2a.types import Message as A2AMessage
 from google.adk.a2a.agent.config import ParametersConfig
@@ -39,15 +39,13 @@ async def _before_request(
   if params.client_call_context is None:
     params.client_call_context = ClientCallContext()
 
-  http_kwargs = params.client_call_context.state.get('http_kwargs', {})
-  headers = http_kwargs.get('headers', {})
+  headers = params.client_call_context.service_parameters or {}
   a2a_extensions = headers.get(HTTP_EXTENSION_HEADER, '').split(',')
   a2a_extensions = [ext for ext in a2a_extensions if ext]
   if _NEW_A2A_ADK_INTEGRATION_EXTENSION not in a2a_extensions:
     a2a_extensions.append(_NEW_A2A_ADK_INTEGRATION_EXTENSION)
   headers[HTTP_EXTENSION_HEADER] = ','.join(a2a_extensions)
-  http_kwargs['headers'] = headers
-  params.client_call_context.state['http_kwargs'] = http_kwargs
+  params.client_call_context.service_parameters = headers
   return a2a_request, params
 
 

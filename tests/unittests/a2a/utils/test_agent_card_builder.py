@@ -123,8 +123,12 @@ class TestAgentCardBuilder:
     mock_agent.name = "test_agent"
     mock_agent.description = "Test agent description"
 
-    mock_primary_skill = Mock(spec=AgentSkill)
-    mock_sub_skill = Mock(spec=AgentSkill)
+    mock_primary_skill = AgentSkill(
+        id="primary", name="Primary", description="Primary skill"
+    )
+    mock_sub_skill = AgentSkill(
+        id="sub", name="Sub", description="Sub skill"
+    )
     mock_build_primary_skills.return_value = [mock_primary_skill]
     mock_build_sub_skills.return_value = [mock_sub_skill]
 
@@ -137,15 +141,16 @@ class TestAgentCardBuilder:
     assert isinstance(result, AgentCard)
     assert result.name == "test_agent"
     assert result.description == "Test agent description"
-    assert result.documentation_url is None
-    assert result.url == "http://localhost:80/a2a"
+    assert not result.documentation_url
+    assert result.supported_interfaces[0].url == "http://localhost:80/a2a"
+    assert result.supported_interfaces[0].protocol_binding == "jsonrpc"
     assert result.version == "0.0.1"
-    assert result.skills == [mock_primary_skill, mock_sub_skill]
+    assert list(result.skills) == [mock_primary_skill, mock_sub_skill]
     assert result.default_input_modes == ["text/plain"]
     assert result.default_output_modes == ["text/plain"]
-    assert result.supports_authenticated_extended_card is False
-    assert result.provider is None
-    assert result.security_schemes is None
+    assert result.capabilities.extended_agent_card is False
+    assert not result.provider.ListFields()
+    assert len(result.security_schemes) == 0
 
   @patch("google.adk.a2a.utils.agent_card_builder._build_primary_skills")
   @patch("google.adk.a2a.utils.agent_card_builder._build_sub_agent_skills")
@@ -158,13 +163,20 @@ class TestAgentCardBuilder:
     mock_agent.name = "test_agent"
     mock_agent.description = None  # Should use default description
 
-    mock_primary_skill = Mock(spec=AgentSkill)
-    mock_sub_skill = Mock(spec=AgentSkill)
+    mock_primary_skill = AgentSkill(
+        id="primary", name="Primary", description="Primary skill"
+    )
+    mock_sub_skill = AgentSkill(
+        id="sub", name="Sub", description="Sub skill"
+    )
     mock_build_primary_skills.return_value = [mock_primary_skill]
     mock_build_sub_skills.return_value = [mock_sub_skill]
 
-    mock_provider = Mock(spec=AgentProvider)
-    mock_security_schemes = {"test": Mock(spec=SecurityScheme)}
+    mock_provider = AgentProvider(
+        url="https://provider.example.com",
+        organization="Example Org",
+    )
+    mock_security_schemes = {"test": SecurityScheme()}
 
     builder = AgentCardBuilder(
         agent=mock_agent,
@@ -181,12 +193,8 @@ class TestAgentCardBuilder:
     # Assert
     assert result.name == "test_agent"
     assert result.description == "An ADK Agent"  # Default description
-    # The source code uses doc_url parameter but AgentCard expects documentation_url
-    # Since the source code doesn't map doc_url to documentation_url, it will be None
-    assert result.documentation_url is None
-    assert (
-        result.url == "https://example.com/a2a"
-    )  # Should strip trailing slash
+    assert result.documentation_url == "https://docs.example.com"
+    assert result.supported_interfaces[0].url == "https://example.com/a2a"
     assert result.version == "2.0.0"
     assert result.provider == mock_provider
     assert result.security_schemes == mock_security_schemes

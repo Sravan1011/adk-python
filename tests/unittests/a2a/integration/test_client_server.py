@@ -17,8 +17,10 @@
 from a2a.types import Message as A2AMessage
 from a2a.types import Part as A2APart
 from a2a.types import Task
+from a2a.types import Role
+from a2a.types import SendMessageRequest
 from a2a.types import TaskState
-from a2a.types import TextPart
+from a2a.types import Part
 from google.adk.agents.remote_a2a_agent import A2A_METADATA_PREFIX
 from google.adk.events.event import Event
 from google.adk.platform import uuid as platform_uuid
@@ -487,17 +489,18 @@ async def test_long_running_function_calls_error():
 
   request_1 = A2AMessage(
       message_id=platform_uuid.new_uuid(),
-      parts=[A2APart(root=TextPart(text="Hi"))],
-      role="user",
+      parts=[A2APart(text="Hi")],
+      role=Role.ROLE_USER,
   )
   response_1_events = []
-  async for event in a2a_client.send_message(request=request_1):
+  async for event in a2a_client.send_message(
+      request=SendMessageRequest(message=request_1)
+  ):
     response_1_events.append(event)
 
   assert len(response_1_events) == 1
   # Extract task_id from Turn 1 responses
-  assert response_1_events[0][1] is None
-  task = response_1_events[0][0]
+  task = response_1_events[0][1]
   assert isinstance(task, Task)
   assert task.status.state == TaskState.input_required
   extracted_task_id = task.id
@@ -505,21 +508,22 @@ async def test_long_running_function_calls_error():
 
   request_2 = A2AMessage(
       message_id=platform_uuid.new_uuid(),
-      parts=[A2APart(root=TextPart(text="Any update?"))],
-      role="user",
+      parts=[A2APart(text="Any update?")],
+      role=Role.ROLE_USER,
       task_id=extracted_task_id,
       context_id=task.context_id if hasattr(task, "context_id") else None,
   )
   response_2_events = []
-  async for event in a2a_client.send_message(request=request_2):
+  async for event in a2a_client.send_message(
+      request=SendMessageRequest(message=request_2)
+  ):
     response_2_events.append(event)
 
   # Verify that we get an error response for the second request due to missing function response
   assert len(response_2_events) == 1
-  assert response_2_events[0][1] is None
-  error_response = response_2_events[0][0]
+  error_response = response_2_events[0][1]
   assert isinstance(error_response, Task)
-  assert error_response.status.message.parts[0].root.text == (
+  assert error_response.status.message.parts[0].text == (
       "It was not provided a function response for the function call."
   )
 

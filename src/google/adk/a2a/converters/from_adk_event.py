@@ -28,7 +28,6 @@ import uuid
 
 from a2a.server.events import Event as A2AEvent
 from a2a.types import Artifact
-from a2a.types import DataPart
 from a2a.types import Message
 from a2a.types import Part as A2APart
 from a2a.types import Role
@@ -36,7 +35,6 @@ from a2a.types import TaskArtifactUpdateEvent
 from a2a.types import TaskState
 from a2a.types import TaskStatus
 from a2a.types import TaskStatusUpdateEvent
-from a2a.types import TextPart
 
 from ...events.event import Event
 from ...flows.llm_flows.functions import REQUEST_EUC_FUNCTION_CALL_NAME
@@ -143,15 +141,14 @@ def create_error_status_event(
       task_id=task_id,
       context_id=context_id,
       status=TaskStatus(
-          state=TaskState.failed,
+          state=TaskState.TASK_STATE_FAILED,
           message=Message(
               message_id=str(uuid.uuid4()),
-              role=Role.agent,
-              parts=[A2APart(root=TextPart(text=error_message))],
+              role=Role.ROLE_AGENT,
+              parts=[A2APart(text=error_message)],
           ),
-          timestamp=datetime.now(timezone.utc).isoformat(),
+          timestamp=datetime.now(timezone.utc),
       ),
-      final=True,
   )
   return _add_event_metadata(event, [error_event])[0]
 
@@ -281,8 +278,8 @@ def _add_event_metadata(
 
   for a2a_event in a2a_events:
     if isinstance(a2a_event, TaskStatusUpdateEvent):
-      a2a_event.status.message.metadata = metadata.copy()
+      a2a_event.status.message.metadata.update(metadata)
     elif isinstance(a2a_event, TaskArtifactUpdateEvent):
-      a2a_event.artifact.metadata = metadata.copy()
+      a2a_event.artifact.metadata.update(metadata)
 
   return a2a_events

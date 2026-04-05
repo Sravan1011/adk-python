@@ -20,7 +20,7 @@ from a2a.types import Role
 from a2a.types import TaskState
 from a2a.types import TaskStatus
 from a2a.types import TaskStatusUpdateEvent
-from a2a.types import TextPart
+from a2a.types import Part
 from google.adk.a2a.executor.task_result_aggregator import TaskResultAggregator
 import pytest
 
@@ -30,7 +30,7 @@ def create_test_message(text: str):
   return Message(
       message_id="test-msg",
       role=Role.agent,
-      parts=[Part(root=TextPart(text=text))],
+      parts=[Part(text=text)],
   )
 
 
@@ -53,7 +53,6 @@ class TestTaskResultAggregator:
         task_id="test-task",
         context_id="test-context",
         status=TaskStatus(state=TaskState.failed, message=status_message),
-        final=True,
     )
 
     self.aggregator.process_event(event)
@@ -71,7 +70,6 @@ class TestTaskResultAggregator:
         status=TaskStatus(
             state=TaskState.auth_required, message=status_message
         ),
-        final=False,
     )
 
     self.aggregator.process_event(event)
@@ -89,7 +87,6 @@ class TestTaskResultAggregator:
         status=TaskStatus(
             state=TaskState.input_required, message=status_message
         ),
-        final=False,
     )
 
     self.aggregator.process_event(event)
@@ -104,7 +101,6 @@ class TestTaskResultAggregator:
         task_id="test-task",
         context_id="test-context",
         status=TaskStatus(state=TaskState.failed, message=None),
-        final=True,
     )
 
     self.aggregator.process_event(event)
@@ -119,7 +115,6 @@ class TestTaskResultAggregator:
         task_id="test-task",
         context_id="test-context",
         status=TaskStatus(state=TaskState.auth_required, message=auth_message),
-        final=False,
     )
     self.aggregator.process_event(auth_event)
     assert self.aggregator.task_state == TaskState.auth_required
@@ -131,7 +126,6 @@ class TestTaskResultAggregator:
         task_id="test-task",
         context_id="test-context",
         status=TaskStatus(state=TaskState.failed, message=failed_message),
-        final=True,
     )
     self.aggregator.process_event(failed_event)
     assert self.aggregator.task_state == TaskState.failed
@@ -147,7 +141,6 @@ class TestTaskResultAggregator:
         status=TaskStatus(
             state=TaskState.input_required, message=input_message
         ),
-        final=False,
     )
     self.aggregator.process_event(input_event)
     assert self.aggregator.task_state == TaskState.input_required
@@ -159,7 +152,6 @@ class TestTaskResultAggregator:
         task_id="test-task",
         context_id="test-context",
         status=TaskStatus(state=TaskState.auth_required, message=auth_message),
-        final=False,
     )
     self.aggregator.process_event(auth_event)
     assert self.aggregator.task_state == TaskState.auth_required
@@ -185,7 +177,6 @@ class TestTaskResultAggregator:
         task_id="test-task",
         context_id="test-context",
         status=TaskStatus(state=TaskState.failed, message=failed_message),
-        final=True,
     )
     self.aggregator.process_event(failed_event)
     assert self.aggregator.task_state == TaskState.failed
@@ -197,7 +188,6 @@ class TestTaskResultAggregator:
         task_id="test-task",
         context_id="test-context",
         status=TaskStatus(state=TaskState.working),
-        final=False,
     )
     self.aggregator.process_event(working_event)
     assert self.aggregator.task_state == TaskState.failed
@@ -214,7 +204,6 @@ class TestTaskResultAggregator:
         status=TaskStatus(
             state=TaskState.input_required, message=input_message
         ),
-        final=False,
     )
     self.aggregator.process_event(input_event)
     assert self.aggregator.task_status_message == input_message
@@ -225,7 +214,6 @@ class TestTaskResultAggregator:
         task_id="test-task",
         context_id="test-context",
         status=TaskStatus(state=TaskState.auth_required, message=auth_message),
-        final=False,
     )
     self.aggregator.process_event(auth_event)
     assert self.aggregator.task_status_message == auth_message
@@ -236,7 +224,6 @@ class TestTaskResultAggregator:
         task_id="test-task",
         context_id="test-context",
         status=TaskStatus(state=TaskState.failed, message=failed_message),
-        final=True,
     )
     self.aggregator.process_event(failed_event)
     assert self.aggregator.task_status_message == failed_message
@@ -247,7 +234,6 @@ class TestTaskResultAggregator:
         task_id="test-task",
         context_id="test-context",
         status=TaskStatus(state=TaskState.working, message=working_message),
-        final=False,
     )
     self.aggregator.process_event(working_event)
     # State should still be failed, and message should remain the failed message
@@ -262,7 +248,6 @@ class TestTaskResultAggregator:
         task_id="test-task",
         context_id="test-context",
         status=TaskStatus(state=TaskState.working, message=working_message),
-        final=False,
     )
 
     self.aggregator.process_event(event)
@@ -277,7 +262,6 @@ class TestTaskResultAggregator:
         task_id="test-task",
         context_id="test-context",
         status=TaskStatus(state=TaskState.working, message=None),
-        final=False,
     )
 
     self.aggregator.process_event(event)
@@ -292,7 +276,6 @@ class TestTaskResultAggregator:
         task_id="test-task",
         context_id="test-context",
         status=TaskStatus(state=TaskState.auth_required, message=auth_message),
-        final=False,
     )
     self.aggregator.process_event(auth_event)
     assert self.aggregator.task_state == TaskState.auth_required
@@ -304,7 +287,6 @@ class TestTaskResultAggregator:
         task_id="test-task",
         context_id="test-context",
         status=TaskStatus(state=TaskState.working, message=working_message),
-        final=False,
     )
     self.aggregator.process_event(working_event)
     assert (

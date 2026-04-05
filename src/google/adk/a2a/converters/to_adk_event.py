@@ -128,6 +128,30 @@ Returns:
 """
 
 
+def _get_metadata_value(
+    metadata: Optional[dict[str, Any]], key: str
+) -> Any:
+  """Returns a metadata value from either a dict or protobuf Struct."""
+  if not metadata:
+    return None
+  try:
+    return metadata.get(key)
+  except AttributeError:
+    try:
+      return metadata[key]
+    except Exception:
+      return None
+
+
+def _is_truthy_metadata_value(value: Any) -> bool:
+  """Returns whether a metadata value represents boolean true."""
+  if value is True:
+    return True
+  if isinstance(value, str):
+    return value.lower() == "true"
+  return False
+
+
 def _convert_a2a_parts_to_adk_parts(
     a2a_parts: List[A2APart],
     part_converter: A2APartToGenAIPartConverter = convert_a2a_part_to_genai_part,
@@ -147,11 +171,15 @@ def _convert_a2a_parts_to_adk_parts(
 
       # Check for long-running functions
       if (
-          a2a_part.root.metadata
-          and a2a_part.root.metadata.get(
-              _get_adk_metadata_key(A2A_DATA_PART_METADATA_IS_LONG_RUNNING_KEY)
+          a2a_part.metadata
+          and _is_truthy_metadata_value(
+              _get_metadata_value(
+                  a2a_part.metadata,
+                  _get_adk_metadata_key(
+                      A2A_DATA_PART_METADATA_IS_LONG_RUNNING_KEY
+                  ),
+              )
           )
-          is True
       ):
         for part in parts:
           if part.function_call:
@@ -213,6 +241,13 @@ def _create_event(
 
 def _parse_adk_metadata_value(value: Any) -> Any:
   """Parses ADK metadata values serialized through A2A."""
+  if hasattr(value, "DESCRIPTOR"):
+    try:
+      from google.protobuf.json_format import MessageToDict
+
+      return MessageToDict(value)
+    except Exception:
+      return value
   if not isinstance(value, str):
     return value
 
@@ -229,7 +264,9 @@ def _extract_event_actions(
   if not metadata:
     return EventActions()
 
-  raw_actions = metadata.get(_get_adk_metadata_key("actions"))
+  raw_actions = _get_metadata_value(
+      metadata, _get_adk_metadata_key("actions")
+  )
   if raw_actions is None:
     return EventActions()
 
@@ -319,7 +356,7 @@ def convert_a2a_task_to_event(
       )
     if (
         a2a_task.status.message
-        and a2a_task.status.state == TaskState.input_required
+        and a2a_task.status.state == TaskState.TASK_STATE_INPUT_REQUIRED
     ):
       event_actions = _merge_event_actions(
           event_actions,

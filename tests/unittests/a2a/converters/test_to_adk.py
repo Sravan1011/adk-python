@@ -14,17 +14,20 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+from datetime import timezone
 from unittest.mock import Mock
 
 from a2a.types import Artifact
 from a2a.types import Message
 from a2a.types import Part as A2APart
+from a2a.types import Role
 from a2a.types import Task
 from a2a.types import TaskArtifactUpdateEvent
 from a2a.types import TaskState
 from a2a.types import TaskStatus
 from a2a.types import TaskStatusUpdateEvent
-from a2a.types import TextPart
+from a2a.types import Part
 from google.adk.a2a.converters.part_converter import A2A_DATA_PART_METADATA_IS_LONG_RUNNING_KEY
 from google.adk.a2a.converters.to_adk_event import convert_a2a_artifact_update_to_event
 from google.adk.a2a.converters.to_adk_event import convert_a2a_message_to_event
@@ -34,6 +37,9 @@ from google.adk.a2a.converters.utils import _get_adk_metadata_key
 from google.adk.agents.invocation_context import InvocationContext
 from google.genai import types as genai_types
 import pytest
+
+
+TEST_TIMESTAMP = datetime(2024, 1, 1, tzinfo=timezone.utc)
 
 
 class TestToAdk:
@@ -47,10 +53,8 @@ class TestToAdk:
 
   def test_convert_a2a_message_to_event_success(self):
     """Test successful conversion of A2A message to Event."""
-    a2a_part = Mock(spec=A2APart)
-    a2a_part.root = Mock(spec=TextPart)
-    a2a_part.root.metadata = {}
-    message = Message(message_id="msg-1", role="user", parts=[a2a_part])
+    a2a_part = Part(text="stub")
+    message = Message(message_id="msg-1", role=Role.user, parts=[a2a_part])
 
     mock_genai_part = genai_types.Part.from_text(text="hello")
     mock_part_converter = Mock(return_value=[mock_genai_part])
@@ -75,12 +79,10 @@ class TestToAdk:
 
   def test_convert_a2a_message_to_event_restores_actions_from_metadata(self):
     """Test A2A message conversion restores ADK actions metadata."""
-    a2a_part = Mock(spec=A2APart)
-    a2a_part.root = Mock(spec=TextPart)
-    a2a_part.root.metadata = {}
+    a2a_part = Part(text="stub")
     message = Message(
         message_id="msg-1",
-        role="user",
+        role=Role.user,
         parts=[a2a_part],
         metadata={
             _get_adk_metadata_key("actions"): {
@@ -107,7 +109,7 @@ class TestToAdk:
     """Test A2A message conversion returns action-only events."""
     message = Message(
         message_id="msg-1",
-        role="user",
+        role=Role.user,
         parts=[],
         metadata={
             _get_adk_metadata_key("actions"): {
@@ -129,20 +131,18 @@ class TestToAdk:
 
   def test_convert_a2a_task_to_event_success(self):
     """Test successful conversion of A2A task to Event."""
-    a2a_part = Mock(spec=A2APart)
-    a2a_part.root = Mock(spec=TextPart)
-    a2a_part.root.metadata = {}
+    a2a_part = Part(text="stub")
     task = Task(
         id="task-1",
         status=TaskStatus(
-            state=TaskState.submitted, timestamp="2024-01-01T00:00:00Z"
+            state=TaskState.submitted, timestamp=TEST_TIMESTAMP
         ),
         context_id="context-1",
-        history=[Message(message_id="msg-1", role="agent", parts=[a2a_part])],
+        history=[
+            Message(message_id="msg-1", role=Role.agent, parts=[a2a_part])
+        ],
         artifacts=[
-            Artifact(
-                artifact_id="art-1", artifact_type="message", parts=[a2a_part]
-            )
+            Artifact(artifact_id="art-1", parts=[a2a_part])
         ],
     )
 
@@ -166,13 +166,12 @@ class TestToAdk:
     task = Task(
         id="task-1",
         status=TaskStatus(
-            state=TaskState.submitted, timestamp="2024-01-01T00:00:00Z"
+            state=TaskState.submitted, timestamp=TEST_TIMESTAMP
         ),
         context_id="context-1",
         artifacts=[
             Artifact(
                 artifact_id="art-1",
-                artifact_type="message",
                 parts=[],
                 metadata={
                     _get_adk_metadata_key("actions"): {
@@ -199,13 +198,12 @@ class TestToAdk:
     task = Task(
         id="task-1",
         status=TaskStatus(
-            state=TaskState.submitted, timestamp="2024-01-01T00:00:00Z"
+            state=TaskState.submitted, timestamp=TEST_TIMESTAMP
         ),
         context_id="context-1",
         artifacts=[
             Artifact(
                 artifact_id="art-1",
-                artifact_type="message",
                 parts=[],
                 metadata={
                     _get_adk_metadata_key("actions"): {
@@ -215,7 +213,6 @@ class TestToAdk:
             ),
             Artifact(
                 artifact_id="art-2",
-                artifact_type="message",
                 parts=[],
                 metadata={},
             ),
@@ -238,13 +235,12 @@ class TestToAdk:
     task = Task(
         id="task-1",
         status=TaskStatus(
-            state=TaskState.submitted, timestamp="2024-01-01T00:00:00Z"
+            state=TaskState.submitted, timestamp=TEST_TIMESTAMP
         ),
         context_id="context-1",
         artifacts=[
             Artifact(
                 artifact_id="art-1",
-                artifact_type="message",
                 parts=[],
                 metadata={
                     _get_adk_metadata_key("actions"): {
@@ -259,7 +255,6 @@ class TestToAdk:
             ),
             Artifact(
                 artifact_id="art-2",
-                artifact_type="message",
                 parts=[],
                 metadata={
                     _get_adk_metadata_key("actions"): {
@@ -283,17 +278,18 @@ class TestToAdk:
 
   def test_convert_a2a_task_to_event_merges_status_and_artifact_actions(self):
     """Test task conversion merges status and artifact actions."""
-    a2a_part = Mock(spec=A2APart)
-    a2a_part.root = Mock(spec=TextPart)
-    a2a_part.root.metadata = {}
+    a2a_part = Part(text="stub")
+    a2a_part.metadata.update({
+        _get_adk_metadata_key(A2A_DATA_PART_METADATA_IS_LONG_RUNNING_KEY): True
+    })
     task = Task(
         id="task-1",
         status=TaskStatus(
             state=TaskState.input_required,
-            timestamp="2024-01-01T00:00:00Z",
+            timestamp=TEST_TIMESTAMP,
             message=Message(
                 message_id="msg-1",
-                role="agent",
+                role=Role.agent,
                 parts=[a2a_part],
                 metadata={
                     _get_adk_metadata_key("actions"): {
@@ -306,7 +302,6 @@ class TestToAdk:
         artifacts=[
             Artifact(
                 artifact_id="art-1",
-                artifact_type="message",
                 parts=[],
                 metadata={
                     _get_adk_metadata_key("actions"): {
@@ -339,24 +334,22 @@ class TestToAdk:
 
   def test_convert_a2a_status_update_to_event_success(self):
     """Test successful conversion of A2A status update to Event."""
-    a2a_part = Mock(spec=A2APart)
-    a2a_part.root = Mock(spec=TextPart)
-    a2a_part.root.metadata = {
+    a2a_part = Part(text="stub")
+    a2a_part.metadata.update({
         _get_adk_metadata_key(A2A_DATA_PART_METADATA_IS_LONG_RUNNING_KEY): True
-    }
+    })
     update = TaskStatusUpdateEvent(
         task_id="task-1",
         status=TaskStatus(
             state=TaskState.input_required,
-            timestamp="now",
+            timestamp=TEST_TIMESTAMP,
             message=Message(
                 message_id="m1",
-                role="agent",
+                role=Role.agent,
                 parts=[a2a_part],
             ),
         ),
         context_id="context-1",
-        final=False,
     )
 
     mock_genai_part = genai_types.Part(
@@ -385,14 +378,10 @@ class TestToAdk:
 
   def test_convert_a2a_artifact_update_to_event_success(self):
     """Test successful conversion of A2A artifact update to Event."""
-    a2a_part = Mock(spec=A2APart)
-    a2a_part.root = Mock(spec=TextPart)
-    a2a_part.root.metadata = {}
+    a2a_part = Part(text="stub")
     update = TaskArtifactUpdateEvent(
         task_id="task-1",
-        artifact=Artifact(
-            artifact_id="art-1", artifact_type="message", parts=[a2a_part]
-        ),
+        artifact=Artifact(artifact_id="art-1", parts=[a2a_part]),
         append=True,
         context_id="context-1",
         last_chunk=False,

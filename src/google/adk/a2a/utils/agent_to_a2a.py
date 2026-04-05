@@ -40,6 +40,18 @@ from ..experimental import a2a_experimental
 from .agent_card_builder import AgentCardBuilder
 
 
+def _normalize_agent_card_dict(agent_card_data: dict) -> dict:
+  """Normalizes legacy agent-card JSON into the proto-based schema."""
+  normalized_data = dict(agent_card_data)
+  legacy_url = normalized_data.pop("url", None)
+  if legacy_url and "supportedInterfaces" not in normalized_data:
+    normalized_data["supportedInterfaces"] = [{
+        "url": legacy_url,
+        "protocolBinding": "JSONRPC",
+    }]
+  return normalized_data
+
+
 def _load_agent_card(
     agent_card: Optional[Union[AgentCard, str]],
 ) -> Optional[AgentCard]:
@@ -65,8 +77,13 @@ def _load_agent_card(
     try:
       path = Path(agent_card)
       with path.open("r", encoding="utf-8") as f:
-        agent_card_data = json.load(f)
-        return AgentCard(**agent_card_data)
+        agent_card_data = _normalize_agent_card_dict(json.load(f))
+        from google.protobuf.json_format import ParseDict
+        return ParseDict(
+            agent_card_data,
+            AgentCard(),
+            ignore_unknown_fields=True,
+        )
     except Exception as e:
       raise ValueError(
           f"Failed to load agent card from {agent_card}: {e}"

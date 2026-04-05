@@ -22,7 +22,7 @@ from typing import Callable
 from typing import Optional
 from typing import Union
 
-from a2a.client.middleware import ClientCallContext
+from a2a.client import ClientCallContext
 from a2a.server.events import Event as A2AEvent
 from a2a.types import Message as A2AMessage
 from pydantic import BaseModel

@@ -50,7 +50,7 @@ class FakeRunner(Runner):
 
 agent_card = AgentCard(
     name="remote_agent",
-    url="http://test",
+    supported_interfaces=[{"url": "http://test", "protocol_binding": "JSONRPC"}],
     description="A fun fact generator agent",
     capabilities=AgentCapabilities(
         streaming=True,

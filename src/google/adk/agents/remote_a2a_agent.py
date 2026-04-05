@@ -30,18 +30,20 @@ from a2a.client import ClientEvent as A2AClientEvent
 from a2a.client.card_resolver import A2ACardResolver
 from a2a.client.client import ClientConfig as A2AClientConfig
 from a2a.client.client_factory import ClientFactory as A2AClientFactory
-from a2a.client.errors import A2AClientHTTPError
-from a2a.client.middleware import ClientCallContext
+from a2a.client.errors import A2AClientError
+from a2a.client import ClientCallContext
 from a2a.types import AgentCard
 from a2a.types import Message as A2AMessage
-from a2a.types import MessageSendConfiguration
 from a2a.types import Part as A2APart
 from a2a.types import Role
+from a2a.types import SendMessageRequest
+from a2a.types import StreamResponse
 from a2a.types import Task as A2ATask
 from a2a.types import TaskArtifactUpdateEvent as A2ATaskArtifactUpdateEvent
 from a2a.types import TaskState
 from a2a.types import TaskStatusUpdateEvent as A2ATaskStatusUpdateEvent
-from a2a.types import TransportProtocol as A2ATransport
+
+from google.protobuf.json_format import MessageToDict
 from google.adk.platform import uuid as platform_uuid
 from google.genai import types as genai_types
 import httpx
@@ -89,6 +91,50 @@ A2A_METADATA_PREFIX = "a2a:"
 DEFAULT_TIMEOUT = 600.0
 
 logger = logging.getLogger("google_adk." + __name__)
+
+
+def _normalize_agent_card_dict(agent_card_data: dict[str, Any]) -> dict[str, Any]:
+  """Normalizes legacy agent-card JSON into the proto-based schema."""
+  normalized_data = dict(agent_card_data)
+  legacy_url = normalized_data.pop("url", None)
+  if legacy_url and "supportedInterfaces" not in normalized_data:
+    normalized_data["supportedInterfaces"] = [{
+        "url": legacy_url,
+        "protocolBinding": "JSONRPC",
+    }]
+  return normalized_data
+
+
+def _get_metadata_value(
+    metadata: Any, key: str, default: Any = None
+) -> Any:
+  """Returns a metadata value from either a dict or proto Struct."""
+  if metadata is None:
+    return default
+  get_method = getattr(metadata, "get", None)
+  if callable(get_method):
+    try:
+      return get_method(key, default)
+    except TypeError:
+      try:
+        return get_method(key)
+      except Exception:
+        pass
+  try:
+    metadata_dict = MessageToDict(metadata, preserving_proto_field_name=True)
+  except Exception:
+    return default
+  return metadata_dict.get(key, default)
+
+
+def _unwrap_stream_response(update: Any) -> Any:
+  """Unwraps a StreamResponse into its concrete payload."""
+  if not isinstance(update, StreamResponse):
+    return update
+  for field_name in ("task", "message", "status_update", "artifact_update"):
+    if update.HasField(field_name):
+      return getattr(update, field_name)
+  return None
 
 
 @a2a_experimental
@@ -233,7 +279,7 @@ class RemoteA2aAgent(BaseAgent):
           httpx_client=self._httpx_client,
           streaming=False,
           polling=False,
-          supported_transports=[A2ATransport.jsonrpc],
+          supported_protocol_bindings=["JSONRPC"],
       )
       self._a2a_client_factory = A2AClientFactory(config=client_config)
     return self._httpx_client
@@ -271,8 +317,14 @@ class RemoteA2aAgent(BaseAgent):
         raise ValueError(f"Path is not a file: {file_path}")
 
       with path.open("r", encoding="utf-8") as f:
-        agent_json_data = json.load(f)
-        return AgentCard(**agent_json_data)
+        agent_json_data = _normalize_agent_card_dict(json.load(f))
+        from google.protobuf.json_format import ParseDict
+
+        return ParseDict(
+            agent_json_data,
+            AgentCard(),
+            ignore_unknown_fields=True,
+        )
     except json.JSONDecodeError as e:
       raise AgentCardResolutionError(
           f"Invalid JSON in agent card file {file_path}: {e}"
@@ -293,19 +345,20 @@ class RemoteA2aAgent(BaseAgent):
 
   async def _validate_agent_card(self, agent_card: AgentCard) -> None:
     """Validate resolved agent card."""
-    if not agent_card.url:
+    url = agent_card.supported_interfaces[0].url if agent_card.supported_interfaces else ""
+    if not url:
       raise AgentCardResolutionError(
           "Agent card must have a valid URL for RPC communication"
       )
 
     # Additional validation can be added here
     try:
-      parsed_url = urlparse(str(agent_card.url))
+      parsed_url = urlparse(str(url))
       if not parsed_url.scheme or not parsed_url.netloc:
         raise ValueError("Invalid RPC URL format")
     except Exception as e:
       raise AgentCardResolutionError(
-          f"Invalid RPC URL in agent card: {agent_card.url}, error: {e}"
+          f"Invalid RPC URL in agent card: {url}, error: {e}"
       ) from e
 
   async def _ensure_resolved(self) -> None:
@@ -361,7 +414,7 @@ class RemoteA2aAgent(BaseAgent):
       return None
 
     a2a_message = convert_event_to_a2a_message(
-        ctx.session.events[-1], ctx, Role.user, self._genai_part_converter
+        ctx.session.events[-1], ctx, Role.ROLE_USER, self._genai_part_converter
     )
     if function_call_event.custom_metadata:
       metadata = function_call_event.custom_metadata
@@ -444,23 +497,24 @@ class RemoteA2aAgent(BaseAgent):
     """
     try:
       if isinstance(a2a_response, tuple):
-        task, update = a2a_response
-        if update is None:
+        update, task = a2a_response
+        update = _unwrap_stream_response(update)
+        if update is None or isinstance(update, A2ATask):
           # This is the initial response for a streaming task or the complete
           # response for a non-streaming task, which is the full task state.
           # We process this to get the initial message.
           event = convert_a2a_task_to_event(
-              task, self.name, ctx, self._a2a_part_converter
+              update or task, self.name, ctx, self._a2a_part_converter
           )
           # for streaming task, we update the event with the task status.
           # We update the event as Thought updates.
           if (
-              task
-              and task.status
-              and task.status.state
+              (update or task)
+              and (update or task).status
+              and (update or task).status.state
               in (
-                  TaskState.submitted,
-                  TaskState.working,
+                  TaskState.TASK_STATE_SUBMITTED,
+                  TaskState.TASK_STATE_WORKING,
               )
               and event.content is not None
               and event.content.parts
@@ -477,8 +531,8 @@ class RemoteA2aAgent(BaseAgent):
               update.status.message, self.name, ctx, self._a2a_part_converter
           )
           if event.content is not None and update.status.state in (
-              TaskState.submitted,
-              TaskState.working,
+              TaskState.TASK_STATE_SUBMITTED,
+              TaskState.TASK_STATE_WORKING,
           ):
             for part in event.content.parts:
               part.thought = True
@@ -551,13 +605,18 @@ class RemoteA2aAgent(BaseAgent):
     """
     try:
       if isinstance(a2a_response, tuple):
-        task, update = a2a_response
+        update, task = a2a_response
+        update = _unwrap_stream_response(update)
         event = None
         if update is None:
           # This is the initial response for a streaming task or the complete
           # response for a non-streaming task.
           event = self._config.a2a_task_converter(
               task, self.name, ctx, self._config.a2a_part_converter
+          )
+        elif isinstance(update, A2ATask):
+          event = self._config.a2a_task_converter(
+              update, self.name, ctx, self._config.a2a_part_converter
           )
         elif isinstance(update, A2ATaskStatusUpdateEvent):
           # This is a streaming task status update.
@@ -643,11 +702,12 @@ class RemoteA2aAgent(BaseAgent):
       a2a_request = A2AMessage(
           message_id=platform_uuid.new_uuid(),
           parts=message_parts,
-          role="user",
+          role=Role.ROLE_USER,
           context_id=context_id,
       )
 
     logger.debug(build_a2a_request_log(a2a_request))
+    send_message_request = SendMessageRequest(message=a2a_request)
 
     try:
       a2a_request, parameters = await execute_before_request_interceptors(
@@ -664,24 +724,27 @@ class RemoteA2aAgent(BaseAgent):
             ctx, a2a_request
         )
 
+      send_message_request = SendMessageRequest(message=a2a_request)
+      if parameters.request_metadata:
+        send_message_request.metadata.update(parameters.request_metadata)
+
       # TODO: Add support for requested_extension and
       # message_send_configuration once they are supported by the A2A client.
       async for a2a_response in self._a2a_client.send_message(
-          request=a2a_request,
-          request_metadata=parameters.request_metadata,
+          request=send_message_request,
           context=parameters.client_call_context,
       ):
         logger.debug(build_a2a_response_log(a2a_response))
 
         metadata = None
         if isinstance(a2a_response, tuple):
-          task = a2a_response[0]
+          task = a2a_response[1]
           if task:
             metadata = task.metadata
         else:
           metadata = a2a_response.metadata
 
-        if metadata and metadata.get(_NEW_A2A_ADK_INTEGRATION_EXTENSION):
+        if _get_metadata_value(metadata, _NEW_A2A_ADK_INTEGRATION_EXTENSION):
           event = await self._handle_a2a_response_v2(a2a_response, ctx)
         else:
           event = await self._handle_a2a_response(a2a_response, ctx)
@@ -697,22 +760,20 @@ class RemoteA2aAgent(BaseAgent):
         # Add metadata about the request and response
         event.custom_metadata = event.custom_metadata or {}
         event.custom_metadata[A2A_METADATA_PREFIX + "request"] = (
-            a2a_request.model_dump(exclude_none=True, by_alias=True)
+            MessageToDict(
+                send_message_request, preserving_proto_field_name=True
+            )
         )
         # If the response is a ClientEvent, record the task state; otherwise,
         # record the message object.
         if isinstance(a2a_response, tuple):
-          event.custom_metadata[A2A_METADATA_PREFIX + "response"] = (
-              a2a_response[0].model_dump(exclude_none=True, by_alias=True)
-          )
+          event.custom_metadata[A2A_METADATA_PREFIX + "response"] = MessageToDict(a2a_response[0], preserving_proto_field_name=True)
         else:
-          event.custom_metadata[A2A_METADATA_PREFIX + "response"] = (
-              a2a_response.model_dump(exclude_none=True, by_alias=True)
-          )
+          event.custom_metadata[A2A_METADATA_PREFIX + "response"] = MessageToDict(a2a_response, preserving_proto_field_name=True)
 
         yield event
 
-    except A2AClientHTTPError as e:
+    except A2AClientError as e:
       error_message = f"A2A request failed: {e}"
       logger.error(error_message)
       yield Event(
@@ -721,9 +782,8 @@ class RemoteA2aAgent(BaseAgent):
           invocation_id=ctx.invocation_id,
           branch=ctx.branch,
           custom_metadata={
-              A2A_METADATA_PREFIX
-              + "request": a2a_request.model_dump(
-                  exclude_none=True, by_alias=True
+              A2A_METADATA_PREFIX + "request": MessageToDict(
+                  send_message_request, preserving_proto_field_name=True
               ),
               A2A_METADATA_PREFIX + "error": error_message,
               A2A_METADATA_PREFIX + "status_code": str(e.status_code),
@@ -740,9 +800,8 @@ class RemoteA2aAgent(BaseAgent):
           invocation_id=ctx.invocation_id,
           branch=ctx.branch,
           custom_metadata={
-              A2A_METADATA_PREFIX
-              + "request": a2a_request.model_dump(
-                  exclude_none=True, by_alias=True
+              A2A_METADATA_PREFIX + "request": MessageToDict(
+                  send_message_request, preserving_proto_field_name=True
               ),
               A2A_METADATA_PREFIX + "error": error_message,
           },

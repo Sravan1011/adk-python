@@ -74,6 +74,18 @@ def _get_user_id(request: RequestContext) -> str:
   return f'A2A_USER_{request.context_id}'
 
 
+def _serialize_request_metadata(metadata: Any) -> dict[str, Any]:
+  """Converts request metadata from either a proto Struct or plain dict."""
+  if not metadata:
+    return {}
+  if isinstance(metadata, dict):
+    return dict(metadata)
+
+  from google.protobuf.json_format import MessageToDict
+
+  return MessageToDict(metadata)
+
+
 @a2a_experimental
 def convert_a2a_request_to_agent_run_request(
     request: RequestContext,
@@ -97,7 +109,9 @@ def convert_a2a_request_to_agent_run_request(
 
   custom_metadata = {}
   if request.metadata:
-    custom_metadata['a2a_metadata'] = request.metadata
+    custom_metadata['a2a_metadata'] = _serialize_request_metadata(
+        request.metadata
+    )
 
   output_parts = []
   for a2a_part in request.message.parts:

@@ -22,6 +22,7 @@ from typing import Optional
 
 from a2a.types import AgentCapabilities
 from a2a.types import AgentCard
+from a2a.types import AgentInterface
 from a2a.types import AgentProvider
 from a2a.types import AgentSkill
 from a2a.types import SecurityScheme
@@ -75,17 +76,24 @@ class AgentCardBuilder:
       sub_agent_skills = await _build_sub_agent_skills(self._agent)
       all_skills = primary_skills + sub_agent_skills
 
+      capabilities = self._capabilities or AgentCapabilities()
+      capabilities.extended_agent_card = False
+
       return AgentCard(
           name=self._agent.name,
           description=self._agent.description or 'An ADK Agent',
-          doc_url=self._doc_url,
-          url=f"{self._rpc_url.rstrip('/')}",
+          documentation_url=self._doc_url,
+          supported_interfaces=[
+              AgentInterface(
+                  url=f"{self._rpc_url.rstrip('/')}",
+                  protocol_binding="jsonrpc"
+              )
+          ],
           version=self._agent_version,
-          capabilities=self._capabilities,
+          capabilities=capabilities,
           skills=all_skills,
           default_input_modes=['text/plain'],
           default_output_modes=['text/plain'],
-          supports_authenticated_extended_card=False,
           provider=self._provider,
           security_schemes=self._security_schemes,
       )

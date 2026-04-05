@@ -19,13 +19,14 @@ from __future__ import annotations
 import json
 import sys
 
+from google.protobuf.json_format import MessageToDict
+from google.protobuf.json_format import MessageToJson
+
 try:
   from a2a.client import ClientEvent as A2AClientEvent
-  from a2a.types import DataPart as A2ADataPart
   from a2a.types import Message as A2AMessage
   from a2a.types import Part as A2APart
   from a2a.types import Task as A2ATask
-  from a2a.types import TextPart as A2ATextPart
 except ImportError as e:
   if sys.version_info < (3, 10):
     raise ImportError(
@@ -38,6 +39,18 @@ except ImportError as e:
 # Constants
 _NEW_LINE = "\n"
 _EXCLUDED_PART_FIELD = {"file": {"bytes"}}
+
+
+def _to_loggable_value(value):
+  """Converts protobuf-like values to plain JSON-serializable objects."""
+  if value is None:
+    return None
+  if hasattr(value, "DESCRIPTOR"):
+    try:
+      return MessageToDict(value)
+    except Exception:
+      return MessageToJson(value)
+  return value
 
 
 def _is_a2a_task(obj) -> bool:
@@ -69,17 +82,17 @@ def _is_a2a_message(obj) -> bool:
 def _is_a2a_text_part(obj) -> bool:
   """Check if an object is an A2A TextPart, with fallback for isinstance issues."""
   try:
-    return isinstance(obj, A2ATextPart)
+    return getattr(obj, "text", None) is not None
   except (TypeError, AttributeError):
-    return type(obj).__name__ == "TextPart" and hasattr(obj, "text")
+    return False
 
 
 def _is_a2a_data_part(obj) -> bool:
   """Check if an object is an A2A DataPart, with fallback for isinstance issues."""
   try:
-    return isinstance(obj, A2ADataPart)
+    return False  # No DataPart in proto
   except (TypeError, AttributeError):
-    return type(obj).__name__ == "DataPart" and hasattr(obj, "data")
+    return False
 
 
 def build_message_part_log(part: A2APart) -> str:
@@ -92,30 +105,72 @@ def build_message_part_log(part: A2APart) -> str:
     A string representation of the part.
   """
   part_content = ""
-  if _is_a2a_text_part(part.root):
-    part_content = f"TextPart: {part.root.text[:100]}" + (
-        "..." if len(part.root.text) > 100 else ""
+  text_val = getattr(part, "text", None)
+  if isinstance(text_val, str) and text_val:
+    part_content = f"TextPart: {text_val[:100]}" + (
+        "..." if len(text_val) > 100 else ""
     )
-  elif _is_a2a_data_part(part.root):
-    # For data parts, show the data keys but exclude large values
-    data_summary = {
-        k: (
-            f"<{type(v).__name__}>"
-            if isinstance(v, (dict, list)) and len(str(v)) > 100
-            else v
-        )
-        for k, v in part.root.data.items()
-    }
-    part_content = f"DataPart: {json.dumps(data_summary, indent=2)}"
   else:
-    part_content = (
-        f"{type(part.root).__name__}:"
-        f" {part.model_dump_json(exclude_none=True, exclude=_EXCLUDED_PART_FIELD)}"
-    )
+    has_data = False
+    has_field = getattr(part, "HasField", None)
+    if callable(has_field):
+      try:
+        has_data_result = part.HasField("data")
+        has_data = (
+            has_data_result
+            if isinstance(has_data_result, bool)
+            else False
+        )
+      except Exception:
+        has_data = False
+    if has_data:
+      try:
+        data_dict = MessageToDict(part.data)
+      except Exception:
+        data_dict = {}
+      summarized_dict = {}
+      for key, value in data_dict.items():
+        if isinstance(value, dict):
+          summarized_dict[key] = "<dict>"
+        elif isinstance(value, list):
+          summarized_dict[key] = "<list>"
+        else:
+          summarized_dict[key] = value
+      part_content = f"DataPart: {json.dumps(summarized_dict, indent=2)}"
+    elif (
+        getattr(part, "function_call", None)
+        and isinstance(getattr(part.function_call, "name", None), str)
+        and part.function_call.name
+    ):
+      part_content = f"FunctionCall: {part.function_call.name}"
+    elif (
+        getattr(part, "function_response", None)
+        and isinstance(getattr(part.function_response, "name", None), str)
+        and part.function_response.name
+    ):
+      part_content = f"FunctionResponse: {part.function_response.name}"
+    elif hasattr(part, "model_dump_json"):
+      try:
+        part_content = f"{type(part).__name__}: {part.model_dump_json()}"
+      except Exception:
+        part_content = f"{type(part).__name__}: <unable to serialize>"
+    else:
+      try:
+        part_content = f"Part: {MessageToJson(part)}"
+      except Exception:
+        part_content = f"Part: <unable to serialize>"
 
   # Add part metadata if it exists
-  if hasattr(part.root, "metadata") and part.root.metadata:
-    metadata_str = json.dumps(part.root.metadata, indent=2).replace(
+  if hasattr(part, "metadata") and part.metadata:
+    try:
+      metadata_value = (
+          MessageToDict(part.metadata)
+          if hasattr(part.metadata, "DESCRIPTOR")
+          else part.metadata
+      )
+    except Exception:
+      metadata_value = part.metadata
+    metadata_str = json.dumps(metadata_value, indent=2).replace(
         "\n", "\n    "
     )
     part_content += f"\n    Part Metadata: {metadata_str}"
@@ -144,18 +199,20 @@ def build_a2a_request_log(req: A2AMessage) -> str:
   # Build message metadata section
   message_metadata_section = ""
   if req.metadata:
+    metadata_value = _to_loggable_value(req.metadata)
     message_metadata_section = f"""
   Metadata:
-  {json.dumps(req.metadata, indent=2).replace(chr(10), chr(10) + '  ')}"""
+  {json.dumps(metadata_value, indent=2).replace(chr(10), chr(10) + '  ')}"""
 
   # Build optional sections
   optional_sections = []
 
   if req.metadata:
+    metadata_value = _to_loggable_value(req.metadata)
     optional_sections.append(
         f"""-----------------------------------------------------------
 Metadata:
-{json.dumps(req.metadata, indent=2)}"""
+{json.dumps(metadata_value, indent=2)}"""
     )
 
   optional_sections_str = _NEW_LINE.join(optional_sections)

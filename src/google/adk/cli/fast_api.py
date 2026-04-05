@@ -599,7 +599,8 @@ def get_fast_api_app(
 
           with (p / "agent.json").open("r", encoding="utf-8") as f:
             data = json.load(f)
-            agent_card = AgentCard(**data)
+            from google.protobuf.json_format import ParseDict
+            agent_card = ParseDict(data, AgentCard())
 
           a2a_app = A2AStarletteApplication(
               agent_card=agent_card,

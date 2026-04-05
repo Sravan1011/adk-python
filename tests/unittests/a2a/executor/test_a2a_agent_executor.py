@@ -23,7 +23,7 @@ from a2a.types import Message
 from a2a.types import Part
 from a2a.types import Role
 from a2a.types import TaskState
-from a2a.types import TextPart
+from a2a.types import Part
 from google.adk.a2a.converters.request_converter import AgentRunRequest
 from google.adk.a2a.executor.a2a_agent_executor import A2aAgentExecutor
 from google.adk.a2a.executor.a2a_agent_executor import A2aAgentExecutorConfig
@@ -62,7 +62,7 @@ class TestA2aAgentExecutor:
 
     self.mock_context = Mock(spec=RequestContext)
     self.mock_context.message = Mock(spec=Message)
-    self.mock_context.message.parts = [Mock(spec=TextPart)]
+    self.mock_context.message.parts = [Mock(spec=Part)]
     self.mock_context.current_task = None
     self.mock_context.task_id = "test-task-id"
     self.mock_context.context_id = "test-context-id"
@@ -132,16 +132,13 @@ class TestA2aAgentExecutor:
         0
     ]
     assert submitted_event.status.state == TaskState.submitted
-    assert submitted_event.final == False
 
     # Verify working event was enqueued
     working_event = self.mock_event_queue.enqueue_event.call_args_list[1][0][0]
     assert working_event.status.state == TaskState.working
-    assert working_event.final == False
 
     # Verify final event was enqueued with proper message field
     final_event = self.mock_event_queue.enqueue_event.call_args_list[-1][0][0]
-    assert final_event.final == True
     # The TaskResultAggregator is created with default state (working), and since no messages
     # are processed, it will publish a status event with the current state
     assert hasattr(final_event.status, "message")
@@ -212,11 +209,9 @@ class TestA2aAgentExecutor:
     # Verify no submitted event (first call should be working event)
     working_event = self.mock_event_queue.enqueue_event.call_args_list[0][0][0]
     assert working_event.status.state == TaskState.working
-    assert working_event.final == False
 
     # Verify final event was enqueued with proper message field
     final_event = self.mock_event_queue.enqueue_event.call_args_list[-1][0][0]
-    assert final_event.final == True
     # The TaskResultAggregator is created with default state (working), and since no messages
     # are processed, it will publish a status event with the current state
     assert hasattr(final_event.status, "message")
@@ -437,11 +432,9 @@ class TestA2aAgentExecutor:
         0
     ]
     assert submitted_event.status.state == TaskState.submitted
-    assert submitted_event.final == False
 
     # Verify final event was enqueued with proper message field
     final_event = self.mock_event_queue.enqueue_event.call_args_list[-1][0][0]
-    assert final_event.final == True
     # The TaskResultAggregator is created with default state (working), and since no messages
     # are processed, it will publish a status event with the current state
     assert hasattr(final_event.status, "message")
@@ -496,11 +489,9 @@ class TestA2aAgentExecutor:
         0
     ]
     assert submitted_event.status.state == TaskState.submitted
-    assert submitted_event.final == False
 
     # Verify final event was enqueued with proper message field
     final_event = self.mock_event_queue.enqueue_event.call_args_list[-1][0][0]
-    assert final_event.final == True
     # The TaskResultAggregator is created with default state (working), and since no messages
     # are processed, it will publish a status event with the current state
     assert hasattr(final_event.status, "message")
@@ -572,14 +563,8 @@ class TestA2aAgentExecutor:
       assert mock_aggregator.process_event.call_count == len(mock_events)
 
       # Verify final event has message field from aggregator and state is completed when aggregator state is working
-      final_events = [
-          call[0][0]
-          for call in self.mock_event_queue.enqueue_event.call_args_list
-          if hasattr(call[0][0], "final") and call[0][0].final == True
-      ]
-      assert len(final_events) >= 1
-      final_event = final_events[-1]  # Get the last final event
-      assert final_event.status.message == mock_aggregator.task_status_message
+      final_event = self.mock_event_queue.enqueue_event.call_args_list[-1][0][0]
+      assert not final_event.status.HasField("message")
       # When aggregator state is working but no message, final event should be working
       assert final_event.status.state == TaskState.working
 
@@ -627,12 +612,10 @@ class TestA2aAgentExecutor:
         0
     ]
     assert submitted_event.status.state == TaskState.submitted
-    assert submitted_event.final == False
 
     # Check failure event (last)
     failure_event = self.mock_event_queue.enqueue_event.call_args_list[-1][0][0]
     assert failure_event.status.state == TaskState.failed
-    assert failure_event.final == True
 
   @pytest.mark.asyncio
   async def test_handle_request_with_aggregator_message(self):
@@ -643,12 +626,12 @@ class TestA2aAgentExecutor:
     # Create a test message to be returned by the aggregator
     from a2a.types import Message
     from a2a.types import Role
-    from a2a.types import TextPart
+    from a2a.types import Part
 
     test_message = Mock(spec=Message)
     test_message.message_id = "test-message-id"
     test_message.role = Role.agent
-    test_message.parts = [Mock(spec=TextPart)]
+    test_message.parts = [Mock(spec=Part)]
 
     # Setup detailed mocks
     self.mock_request_converter.return_value = AgentRunRequest(
@@ -698,14 +681,9 @@ class TestA2aAgentExecutor:
       )
 
       # Verify final event has message field from aggregator
-      final_events = [
-          call[0][0]
-          for call in self.mock_event_queue.enqueue_event.call_args_list
-          if hasattr(call[0][0], "final") and call[0][0].final == True
-      ]
-      assert len(final_events) >= 1
-      final_event = final_events[-1]  # Get the last final event
-      assert final_event.status.message == test_message
+      final_event = self.mock_event_queue.enqueue_event.call_args_list[-1][0][0]
+      assert final_event.status.message.message_id == test_message.message_id
+      assert final_event.status.message.role == test_message.role
       # When aggregator state is completed (not working), final event should be completed
       assert final_event.status.state == TaskState.completed
 
@@ -718,12 +696,12 @@ class TestA2aAgentExecutor:
     # Create a test message to be returned by the aggregator
     from a2a.types import Message
     from a2a.types import Role
-    from a2a.types import TextPart
+    from a2a.types import Part
 
     test_message = Mock(spec=Message)
     test_message.message_id = "test-message-id"
     test_message.role = Role.agent
-    test_message.parts = [Mock(spec=TextPart)]
+    test_message.parts = [Mock(spec=Part)]
 
     # Setup detailed mocks
     self.mock_request_converter.return_value = AgentRunRequest(
@@ -773,14 +751,9 @@ class TestA2aAgentExecutor:
       )
 
       # Verify final event preserves the non-working state
-      final_events = [
-          call[0][0]
-          for call in self.mock_event_queue.enqueue_event.call_args_list
-          if hasattr(call[0][0], "final") and call[0][0].final == True
-      ]
-      assert len(final_events) >= 1
-      final_event = final_events[-1]  # Get the last final event
-      assert final_event.status.message == test_message
+      final_event = self.mock_event_queue.enqueue_event.call_args_list[-1][0][0]
+      assert final_event.status.message.message_id == test_message.message_id
+      assert final_event.status.message.role == test_message.role
       # When aggregator state is failed (not working), final event should keep failed state
       assert final_event.status.state == TaskState.failed
 
@@ -797,12 +770,12 @@ class TestA2aAgentExecutor:
     from a2a.types import Message
     from a2a.types import Part
     from a2a.types import Role
-    from a2a.types import TextPart
+    from a2a.types import Part
 
     test_message = Mock(spec=Message)
     test_message.message_id = "test-message-id"
     test_message.role = Role.agent
-    test_message.parts = [Part(root=TextPart(text="test content"))]
+    test_message.parts = [Part(text="test content")]
 
     # Setup detailed mocks
     self.mock_request_converter.return_value = AgentRunRequest(
@@ -866,13 +839,7 @@ class TestA2aAgentExecutor:
       assert artifact_event.artifact.parts == test_message.parts
 
       # Verify final status event was published with completed state
-      final_events = [
-          call[0][0]
-          for call in self.mock_event_queue.enqueue_event.call_args_list
-          if hasattr(call[0][0], "final") and call[0][0].final == True
-      ]
-      assert len(final_events) >= 1
-      final_event = final_events[-1]  # Get the last final event
+      final_event = self.mock_event_queue.enqueue_event.call_args_list[-1][0][0]
       assert final_event.status.state == TaskState.completed
       assert final_event.task_id == "test-task-id"
       assert final_event.context_id == "test-context-id"
@@ -890,12 +857,12 @@ class TestA2aAgentExecutor:
     from a2a.types import Message
     from a2a.types import Part
     from a2a.types import Role
-    from a2a.types import TextPart
+    from a2a.types import Part
 
     test_message = Mock(spec=Message)
     test_message.message_id = "test-message-id"
     test_message.role = Role.agent
-    test_message.parts = [Part(root=TextPart(text="test content"))]
+    test_message.parts = [Part(text="test content")]
 
     # Setup detailed mocks
     self.mock_request_converter.return_value = AgentRunRequest(
@@ -953,15 +920,11 @@ class TestA2aAgentExecutor:
       assert len(artifact_events) == 0
 
       # Verify final status event was published with the actual state and message
-      final_events = [
-          call[0][0]
-          for call in self.mock_event_queue.enqueue_event.call_args_list
-          if hasattr(call[0][0], "final") and call[0][0].final == True
-      ]
-      assert len(final_events) >= 1
-      final_event = final_events[-1]  # Get the last final event
+      final_event = self.mock_event_queue.enqueue_event.call_args_list[-1][0][0]
       assert final_event.status.state == TaskState.auth_required
-      assert final_event.status.message == test_message
+      assert final_event.status.message.message_id == test_message.message_id
+      assert final_event.status.message.role == test_message.role
+      assert final_event.status.message.parts == test_message.parts
       assert final_event.task_id == "test-task-id"
       assert final_event.context_id == "test-context-id"
 

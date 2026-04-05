@@ -15,7 +15,7 @@
 from unittest.mock import Mock
 from unittest.mock import patch
 
-from a2a.types import DataPart
+from a2a.types import Part
 from a2a.types import Message
 from a2a.types import Role
 from a2a.types import Task
@@ -195,11 +195,11 @@ class TestEventConverter:
   def test_process_long_running_tool_marks_tool(self):
     """Test processing of long-running tool metadata."""
     mock_a2a_part = Mock()
-    mock_data_part = Mock(spec=DataPart)
+    mock_data_part = Mock()
     mock_data_part.metadata = {"adk_type": "function_call", "id": "tool-123"}
     mock_data_part.data = Mock()
     mock_data_part.data.get = Mock(return_value="tool-123")
-    mock_a2a_part.root = mock_data_part
+    mock_a2a_part = mock_data_part
 
     self.mock_event.long_running_tool_ids = {"tool-123"}
 
@@ -226,11 +226,11 @@ class TestEventConverter:
   def test_process_long_running_tool_no_marking(self):
     """Test processing when tool should not be marked as long-running."""
     mock_a2a_part = Mock()
-    mock_data_part = Mock(spec=DataPart)
+    mock_data_part = Mock()
     mock_data_part.metadata = {"adk_type": "function_call", "id": "tool-456"}
     mock_data_part.data = Mock()
     mock_data_part.data.get = Mock(return_value="tool-456")
-    mock_a2a_part.root = mock_data_part
+    mock_a2a_part = mock_data_part
 
     self.mock_event.long_running_tool_ids = {"tool-123"}  # Different ID
 
@@ -440,20 +440,20 @@ class TestEventConverter:
 
   def test_create_status_update_event_with_auth_required_state(self):
     """Test creation of status update event with auth_required state."""
-    from a2a.types import DataPart
+    from a2a.types import Part
     from a2a.types import Part
 
     # Create a mock message with a part that triggers auth_required state
     mock_message = Mock(spec=Message)
     mock_part = Mock()
-    mock_data_part = Mock(spec=DataPart)
+    mock_data_part = Mock()
     mock_data_part.metadata = {
         "adk_type": "function_call",
         "adk_is_long_running": True,
     }
     mock_data_part.data = Mock()
     mock_data_part.data.get = Mock(return_value="request_euc")
-    mock_part.root = mock_data_part
+    mock_part = mock_data_part
     mock_message.parts = [mock_part]
 
     task_id = "test-task-id"
@@ -504,20 +504,20 @@ class TestEventConverter:
 
   def test_create_status_update_event_with_input_required_state(self):
     """Test creation of status update event with input_required state."""
-    from a2a.types import DataPart
+    from a2a.types import Part
     from a2a.types import Part
 
     # Create a mock message with a part that triggers input_required state
     mock_message = Mock(spec=Message)
     mock_part = Mock()
-    mock_data_part = Mock(spec=DataPart)
+    mock_data_part = Mock()
     mock_data_part.metadata = {
         "adk_type": "function_call",
         "adk_is_long_running": True,
     }
     mock_data_part.data = Mock()
     mock_data_part.data.get = Mock(return_value="some_other_function")
-    mock_part.root = mock_data_part
+    mock_part = mock_data_part
     mock_message.parts = [mock_part]
 
     task_id = "test-task-id"
@@ -574,8 +574,8 @@ class TestEventConverter:
 
     # Arrange
     mock_genai_part = genai_types.Part(text="source part")
-    mock_a2a_part1 = a2a_types.Part(root=a2a_types.TextPart(text="part 1"))
-    mock_a2a_part2 = a2a_types.Part(root=a2a_types.TextPart(text="part 2"))
+    mock_a2a_part1 = a2a_types.Part(text="part 1")
+    mock_a2a_part2 = a2a_types.Part(text="part 2")
     mock_convert_part = Mock()
     mock_convert_part.return_value = [mock_a2a_part1, mock_a2a_part2]
 
@@ -593,8 +593,8 @@ class TestEventConverter:
     # Assert
     assert result is not None
     assert len(result.parts) == 2
-    assert result.parts[0].root.text == "part 1"
-    assert result.parts[1].root.text == "part 2"
+    assert result.parts[0].text == "part 1"
+    assert result.parts[1].text == "part 2"
     mock_convert_part.assert_called_once_with(mock_genai_part)
 
 
@@ -612,20 +612,20 @@ class TestA2AToEventConverters:
     from a2a.types import Artifact
     from a2a.types import Part
     from a2a.types import TaskStatus
-    from a2a.types import TextPart
+    from a2a.types import Part
 
     # Create mock artifacts
-    artifact_part = Part(root=TextPart(text="artifact content"))
+    artifact_part = Part(text="artifact content")
     mock_artifact = Mock(spec=Artifact)
     mock_artifact.parts = [artifact_part]
 
     # Create mock status and history
-    status_part = Part(root=TextPart(text="status content"))
+    status_part = Part(text="status content")
     mock_status = Mock(spec=TaskStatus)
     mock_status.message = Mock(spec=Message)
     mock_status.message.parts = [status_part]
 
-    history_part = Part(root=TextPart(text="history content"))
+    history_part = Part(text="history content")
     mock_history_message = Mock(spec=Message)
     mock_history_message.parts = [history_part]
 
@@ -656,10 +656,10 @@ class TestA2AToEventConverters:
     """Test convert_a2a_task_to_event with status message (no artifacts)."""
     from a2a.types import Part
     from a2a.types import TaskStatus
-    from a2a.types import TextPart
+    from a2a.types import Part
 
     # Create mock status
-    status_part = Part(root=TextPart(text="status content"))
+    status_part = Part(text="status content")
     mock_status = Mock(spec=TaskStatus)
     mock_status.message = Mock(spec=Message)
     mock_status.message.parts = [status_part]

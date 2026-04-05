@@ -22,7 +22,7 @@ from a2a.types import Part as A2APart
 from a2a.types import TaskArtifactUpdateEvent
 from a2a.types import TaskState
 from a2a.types import TaskStatusUpdateEvent
-from a2a.types import TextPart
+from a2a.types import Part
 from google.adk.a2a.converters.from_adk_event import convert_event_to_a2a_events
 from google.adk.events.event import Event
 from google.genai import types as genai_types
@@ -61,8 +61,8 @@ class TestFromAdk:
     agents_artifacts = {}
 
     # Mock part converter to return a standard text part
-    mock_a2a_part = A2APart(root=TextPart(text="hello"))
-    mock_a2a_part.root.metadata = {}
+    mock_a2a_part = A2APart(text="hello")
+    mock_a2a_part.metadata.update({})
     mock_convert_part = Mock(return_value=[mock_a2a_part])
 
     result = convert_event_to_a2a_events(
