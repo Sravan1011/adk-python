@@ -240,6 +240,27 @@ def change_issue_type(issue_number: int, issue_type: str) -> dict[str, Any]:
   except requests.exceptions.RequestException as e:
     return error_response(f"Error: {e}")
 
+  # Verify the type was actually updated
+  try:
+    updated_issue = get_request(url)
+    actual_type = updated_issue.get("type")
+    if actual_type is None:
+      return error_response(
+          f"Issue type update for issue #{issue_number} could not be verified:"
+          " 'type' field not present in API response. The API may not support"
+          " issue types for this repository."
+      )
+    actual_type_name = actual_type.get("name", "")
+    if actual_type_name.lower() != issue_type.lower():
+      return error_response(
+          f"Issue type update for issue #{issue_number} failed silently:"
+          f" expected '{issue_type}', but got '{actual_type_name}'."
+      )
+  except requests.exceptions.RequestException as e:
+    return error_response(
+        f"Issue type PATCH succeeded but verification GET failed: {e}"
+    )
+
   return {"status": "success", "message": response, "issue_type": issue_type}
 
 
